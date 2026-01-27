@@ -2,24 +2,23 @@
 
 ## Data Layer
 
-### Finnhub Client
+### Finnhub MCP Server (Tools)
+`src.tools.finnhub_server`
 
-`src.data.finnhub_client.FinnhubClient`
+Implements Model Context Protocol (MCP) tools for real-time market data.
 
-Handles interaction with Finnhub API for real-time market data.
-
-```python
-from src.data.finnhub_client import get_finnhub_client
-
-client = get_finnhub_client()
+**Run Server:**
+```bash
+python src/tools/finnhub_server.py
 ```
 
-#### Key Methods
-
-- `get_quote(symbol: str) -> dict`: Get real-time price data (Open, High, Low, Close).
-- `get_company_profile(symbol: str) -> dict`: Get company metadata (Sector, Market Cap).
-- `get_company_news(symbol: str, ...) -> list`: Get recent market news.
-- `get_financial_metrics(symbol: str) -> dict`: Get basic financial ratios.
+#### Available Tools
+- **`get_stock_quote(symbol)`**: Returns real-time price info (c, h, l, o, pc).
+  - *Example Return*: `{"current_price": 150.5, "change": 2.1, ...}`
+- **`get_company_profile(symbol)`**: Returns industry, market cap, and IPO details.
+- **`get_price_target(symbol)`**: Returns analyst consensus and price targets.
+- **`get_company_news(symbol, from_date, to)`**: Fetches company-specific news.
+- **`get_market_news(category)`**: Fetches general market news.
 
 ### Supabase Client
 

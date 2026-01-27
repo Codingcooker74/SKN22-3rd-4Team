@@ -24,11 +24,14 @@
 - **데이터**: Supabase `company_relationships` 테이블 활용.
 - **UI**: Interactive Graph Visualization.
 
-### 4. **실시간 데이터 통합** 📈
-
-- **Source**: **Finnhub API** 단일화 (기존 RapidAPI 대체).
-- **데이터**: 실시간 주가(Quote), 시장 뉴스, 재무 지표(Metrics).
-- **안정성**: API 에러 핸들링 및 유효성 검사 강화.
+### 4. **실시간 데이터 통합 (via MCP)** 🔌
+- **아키텍처**: **MCP (Model Context Protocol)** 기반의 Tools 서버 구축.
+- **Tools**:
+  - `get_stock_quote`: 실시간 주가 조회
+  - `get_company_profile`: 기업 프로필 조회
+  - `get_price_target`: 투자의견 및 목표주가
+  - `get_company_news`: 관련 뉴스 검색
+- **장점**: 에이전트(LangGraph/LLM)가 필요 시 **스스로 도구를 호출(Tool Calling)**하여 최신 데이터 획득.
 
 ---
 
