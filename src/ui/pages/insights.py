@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 try:
     from rag.analyst_chat import AnalystChatbot
     from rag.report_generator import ReportGenerator
+    from utils.pdf_utils import create_pdf
 
     RAG_AVAILABLE = True
 except ImportError as e:
@@ -33,17 +34,8 @@ def render():
         st.info("pip install openai supabase 를 실행하세요")
         return
 
-    # Tabs for different features
-    tab1, tab2, tab3 = st.tabs(["💬 AI 챗봇", "📊 레포트 생성", "⚖️ 비교 분석"])
-
-    with tab1:
-        render_chatbot()
-
-    with tab2:
-        render_report_generator()
-
-    with tab3:
-        render_comparison()
+    # Chatbot only
+    render_chatbot()
 
 
 def render_chatbot():
@@ -52,18 +44,9 @@ def render_chatbot():
     st.markdown("### 🤖 AI 금융 애널리스트")
     st.caption("gpt-4.1-mini 기반 | 애널리스트/기자 스타일 응답")
 
-    # Company selector
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        ticker = st.text_input(
-            "분석할 회사 티커 (선택사항)",
-            placeholder="AAPL, MSFT, GOOGL...",
-            help="특정 회사에 대해 질문하려면 티커를 입력하세요",
-        )
-
-    with col2:
-        use_rag = st.checkbox("RAG 사용", value=True, help="관련 문서 검색 활성화")
+    st.info(
+        "💡 **팁**: '애플 등록해줘'라고 말하면 기업을 등록할 수 있고, '엔비디아와 비교해줘'라고 하면 비교 분석을 수행합니다."
+    )
 
     # 추천 질문
     st.markdown("#### 💡 추천 질문")
@@ -73,14 +56,16 @@ def render_chatbot():
         "애널리스트들의 투자 의견은 어떤가요?",
         "주요 경쟁사와 비교했을 때 장단점은?",
         "투자 리스크 요인은 무엇인가요?",
-        "배당 정책과 배당수익률은 어떤가요?",
+        "애플 등록해줘 (데이터 수집)",
     ]
 
     # 추천 질문 버튼들
     cols = st.columns(2)
     for i, question in enumerate(suggested_questions):
         with cols[i % 2]:
-            if st.button(f"💬 {question}", key=f"suggest_{i}", use_container_width=True):
+            if st.button(
+                f"💬 {question}", key=f"suggest_{i}", use_container_width=True
+            ):
                 st.session_state.suggested_question = question
                 st.rerun()
 
@@ -100,12 +85,40 @@ def render_chatbot():
     # 추천 질문이 선택되었는지 확인
     suggested = st.session_state.pop("suggested_question", None)
 
-    # Display chat history in a scrollable container
-    chat_container = st.container(height=600)
-    with chat_container:
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+    # 1. Chat History Container (Show only if history exists)
+    if st.session_state.chat_history:
+        chat_container = st.container(height=400)
+        with chat_container:
+            for i, msg in enumerate(st.session_state.chat_history):
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+                    # Check for downloadable report
+                    if msg.get("report"):
+                        try:
+                            pdf_bytes = create_pdf(msg["report"])
+                            mime_type = "application/pdf"
+                            file_ext = "pdf"
+                            label = "📥 분석 레포트 다운로드 (PDF)"
+                        except Exception:
+                            pdf_bytes = msg["report"].encode("utf-8")
+                            mime_type = "text/markdown"
+                            file_ext = "md"
+                            label = "📥 분석 레포트 다운로드 (MD)"
+
+                        st.download_button(
+                            label=label,
+                            data=pdf_bytes,
+                            file_name=f"analysis_report_{i}.{file_ext}",
+                            mime=mime_type,
+                            key=f"chat_dl_{i}",
+                        )
+    else:
+        st.info(
+            "👆 추천 질문을 선택하거나, 아래 입력창에 질문을 입력하여 대화를 시작하세요."
+        )
+
+    st.markdown("---")
 
     # Chat input processing
     prompt = st.chat_input("금융 관련 질문을 입력하세요...")
@@ -120,13 +133,22 @@ def render_chatbot():
 
         # Generate response
         try:
-            with st.spinner("분석 중..."):
-                response = st.session_state.chatbot.chat(
-                    prompt, ticker=ticker.upper() if ticker else None, use_rag=use_rag
-                )
+            with st.spinner("분석 중... (시간이 걸릴 수 있습니다)"):
+                # Ticker is now automatically detected by the chatbot from the prompt
+                result = st.session_state.chatbot.chat(prompt, use_rag=True)
+
+            # Handle structured response from chatbot
+            if isinstance(result, dict):
+                content = result["content"]
+                report = result.get("report")
+            else:
+                content = result
+                report = None
 
             # Add assistant message
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.session_state.chat_history.append(
+                {"role": "assistant", "content": content, "report": report}
+            )
 
             # Rerun to update chat history in container
             st.rerun()
@@ -139,82 +161,3 @@ def render_chatbot():
         st.session_state.chat_history = []
         st.session_state.chatbot.clear_history()
         st.rerun()
-
-
-def render_report_generator():
-    """Render Report Generator"""
-
-    st.markdown("### 📊 투자 분석 레포트")
-    st.caption("gpt-5-nano 기반 | 구조화된 투자 리서치 보고서")
-
-    col1, col2 = st.columns([3, 1])
-
-    with col1:
-        ticker = st.text_input("회사 티커", placeholder="AAPL", key="report_ticker")
-
-    with col2:
-        generate_btn = st.button("📝 레포트 생성", type="primary", use_container_width=True)
-
-    if generate_btn and ticker:
-        try:
-            generator = ReportGenerator()
-
-            with st.spinner(f"📊 {ticker.upper()} 분석 레포트 생성 중..."):
-                report = generator.generate_report(ticker.upper())
-
-            st.markdown("---")
-            st.markdown(report)
-
-            # Download button
-            st.download_button(
-                label="📥 레포트 다운로드 (MD)",
-                data=report,
-                file_name=f"{ticker.upper()}_analysis_report.md",
-                mime="text/markdown",
-            )
-
-        except Exception as e:
-            st.error(f"레포트 생성 실패: {e}")
-
-    elif generate_btn:
-        st.warning("티커를 입력해주세요")
-
-
-def render_comparison():
-    """Render Comparison Analysis"""
-
-    st.markdown("### ⚖️ 기업 비교 분석")
-
-    tickers_input = st.text_input(
-        "비교할 회사 티커들 (쉼표로 구분)", placeholder="AAPL, MSFT, GOOGL"
-    )
-
-    if st.button("📊 비교 분석", type="primary"):
-        if tickers_input:
-            tickers = [t.strip().upper() for t in tickers_input.split(",")]
-
-            if len(tickers) < 2:
-                st.warning("2개 이상의 회사를 입력해주세요")
-                return
-
-            try:
-                generator = ReportGenerator()
-
-                with st.spinner(f"⚖️ {', '.join(tickers)} 비교 분석 중..."):
-                    report = generator.generate_comparison_report(tickers)
-
-                st.markdown("---")
-                st.markdown(report)
-
-                # Download button for comparison report
-                st.download_button(
-                    label="📥 비교 레포트 다운로드 (MD)",
-                    data=report,
-                    file_name=f"comparison_{'_'.join(tickers)}.md",
-                    mime="text/markdown",
-                )
-
-            except Exception as e:
-                st.error(f"비교 분석 실패: {e}")
-        else:
-            st.warning("비교할 회사 티커를 입력해주세요")

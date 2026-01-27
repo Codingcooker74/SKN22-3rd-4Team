@@ -43,7 +43,7 @@ class ReportGenerator:
             raise ValueError("OPENAI_API_KEY 환경 변수가 필요합니다.")
 
         self.openai_client = OpenAI(api_key=self.openai_api_key)
-        self.model = "gpt-5-nano"  # 레포트용 모델
+        self.model = "gpt-4.1-mini"  # 레포트용 모델
         self.embedding_model = "text-embedding-3-small"
 
         # Supabase client
@@ -93,7 +93,10 @@ class ReportGenerator:
         try:
             # Company info
             result = (
-                self.supabase.table("companies").select("*").eq("ticker", ticker.upper()).execute()
+                self.supabase.table("companies")
+                .select("*")
+                .eq("ticker", ticker.upper())
+                .execute()
             )
             if result.data:
                 data["company"] = result.data[0]
@@ -225,7 +228,9 @@ class ReportGenerator:
                 parts.append(f"- 회사명: {profile.get('name', 'N/A')}")
                 parts.append(f"- 티커: {profile.get('ticker', ticker.upper())}")
                 parts.append(f"- 산업: {profile.get('finnhubIndustry', 'N/A')}")
-                parts.append(f"- 시가총액: ${profile.get('marketCapitalization', 0):,.0f}M")
+                parts.append(
+                    f"- 시가총액: ${profile.get('marketCapitalization', 0):,.0f}M"
+                )
                 parts.append(f"- 거래소: {profile.get('exchange', 'N/A')}")
                 parts.append(f"- 웹사이트: {profile.get('weburl', 'N/A')}")
 
@@ -251,10 +256,14 @@ class ReportGenerator:
             if financials and "metric" in financials:
                 metrics = financials["metric"]
                 parts.append("\n## 재무 지표")
-                parts.append(f"- P/E (TTM): {metrics.get('peBasicExclExtraTTM', 'N/A')}")
+                parts.append(
+                    f"- P/E (TTM): {metrics.get('peBasicExclExtraTTM', 'N/A')}"
+                )
                 parts.append(f"- P/B: {metrics.get('pbAnnual', 'N/A')}")
                 parts.append(f"- ROE: {metrics.get('roeRfy', 'N/A')}")
-                parts.append(f"- 배당수익률: {metrics.get('dividendYieldIndicatedAnnual', 'N/A')}%")
+                parts.append(
+                    f"- 배당수익률: {metrics.get('dividendYieldIndicatedAnnual', 'N/A')}%"
+                )
                 parts.append(f"- 52주 최고: ${metrics.get('52WeekHigh', 'N/A')}")
                 parts.append(f"- 52주 최저: ${metrics.get('52WeekLow', 'N/A')}")
 
@@ -355,9 +364,9 @@ class ReportGenerator:
 
             except Exception as e:
                 logger.warning(
-                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4o-mini"
+                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4.1-mini"
                 )
-                used_model = "gpt-4o-mini"
+                used_model = "gpt-4.1-mini"
                 try:
                     # 2. Try Fallback Model
                     response = self.openai_client.chat.completions.create(
@@ -397,7 +406,9 @@ class ReportGenerator:
                 # Get Supabase data
                 supabase_data = self._get_company_data(ticker)
                 supabase_context = (
-                    self._format_data_context(supabase_data) if supabase_data.get("company") else ""
+                    self._format_data_context(supabase_data)
+                    if supabase_data.get("company")
+                    else ""
                 )
 
                 # Get Finnhub data
@@ -447,17 +458,17 @@ class ReportGenerator:
 
             except Exception as e:
                 logger.warning(
-                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4o-mini"
+                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4.1-mini"
                 )
                 try:
                     # 2. Try Fallback Model
                     response = self.openai_client.chat.completions.create(
-                        model="gpt-4o-mini", messages=messages, max_tokens=4000
+                        model="gpt-4.1-mini", messages=messages, max_tokens=4000
                     )
                     content = response.choices[0].message.content
                     if not content:
                         return "❌ 비교 보고서 생성 실패: 모델로부터 내용을 받아오지 못했습니다."
-                    return f"⚠️ [Fallback Model: gpt-4o-mini]\n\n{content}"
+                    return f"⚠️ [Fallback Model: gpt-4.1-mini]\n\n{content}"
                 except Exception as e2:
                     return f"❌ 비교 보고서 생성 실패: {str(e2)}"
 

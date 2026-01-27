@@ -9,6 +9,12 @@ SKN22-3rd-4Team/
 ├── .env                           # Environment variables
 ├── .gitignore                     # Git ignore rules
 ├── README.md                      # Project documentation
+├── QUICKSTART.md                  # Quick start guide
+├── STRUCTURE.md                   # This file
+├── API.md                         # API reference
+├── DEVELOPMENT.md                 # Development guide
+├── PROJECT_SUMMARY.md             # Project summary
+├── PULL_REQUEST.md                 # PR document (Korean)
 │
 ├── config/                        # Configuration files
 │   └── settings.py               # Application settings (General)
@@ -19,7 +25,8 @@ SKN22-3rd-4Team/
 ├── src/                          # Source code
 │   ├── data/                     # Data Access Layer
 │   │   ├── finnhub_client.py    # Finnhub API Client (Market/Financial Data)
-│   │   └── supabase_client.py   # Supabase DB Client
+│   │   ├── supabase_client.py   # Supabase DB Client
+│   │   └── filing_processor.py   # SEC Filing Processor
 │   │
 │   ├── rag/                      # RAG & AI Logic
 │   │   ├── analyst_chat.py      # Investment Analyst Chatbot Logic
@@ -32,13 +39,13 @@ SKN22-3rd-4Team/
 │   │
 │   ├── ui/                       # Streamlit UI
 │   │   └── pages/               
-│   │       ├── home.py          
-│   │       ├── graph_analysis.py   
-│   │       ├── sql_query.py     
-│   │       └── insights.py      # Main Analysis & Chat Interface
+│   │       ├── home.py          # Dashboard home
+│   │       ├── insights.py      # Main Analysis & Chat Interface
+│   │       └── report_page.py   # Standalone Report Generator
 │   │
 │   └── utils/                    # Utilities
 │
+├── scripts/                      # Utility scripts
 └── notebooks/                   # Jupyter notebooks
 ```
 
@@ -63,13 +70,17 @@ SKN22-3rd-4Team/
 - Manages connection to Supabase PostgreSQL.
 - Handles data retrieval for companies and financial reports.
 
+#### `filing_processor.py`
+
+- Processes and parses SEC filings (10-K, 10-Q) into structured data.
+
 ### RAG Layer (`src/rag`)
 
 #### `analyst_chat.py`
 
 - Implements the "AI Financial Analyst" chatbot.
 - Contextualizes user queries with RAG (Retrieval Augmented Generation).
-- Integrates real-time data from Finnhub.
+- Integrates real-time data from Finnhub with tool calling.
 
 #### `report_generator.py`
 
@@ -87,11 +98,12 @@ SKN22-3rd-4Team/
 
 ### UI Layer (`src/ui`)
 
-#### `metrics.py` / `charts.py`
-
-- Reusable UI components for displaying financial data.
-
 #### `insights.py`
 
 - The core interaction page for users.
 - Hosting the Chatbot and Report Generator interfaces.
+- Features automatic ticker detection from natural language queries.
+
+#### `report_page.py`
+
+- A dedicated page for generating and viewing financial reports.

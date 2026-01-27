@@ -62,9 +62,10 @@ The app will open in your browser at `http://localhost:8501`.
 
 - **Chat with AI Analyst**: Ask questions about market trends, specific companies, or financial metrics.
   - *Example*: "How is Apple's revenue growth compared to Microsoft?"
-- **Generate Reports**: Select a ticker to generate a comprehensive investment report.
+  - *Note*: The system automatically detects ticker symbols from your query.
+- **Generate Reports**: Simply ask the chatbot to generate a report for a specific company.
+  - *Example*: "Generate an investment report for NVDA"
   - Reports analyze financials, market sentiment, and risks using `gpt-5-nano` (or fallback).
-- **Competitor Analysis**: Automatically retrieve and compare competitor data.
 
 ### 3. Graph Analysis
 

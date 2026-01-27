@@ -3,16 +3,19 @@
 ## Data Layer
 
 ### Finnhub MCP Server (Tools)
+
 `src.tools.finnhub_server`
 
 Implements Model Context Protocol (MCP) tools for real-time market data.
 
 **Run Server:**
+
 ```bash
 python src/tools/finnhub_server.py
 ```
 
 #### Available Tools
+
 - **`get_stock_quote(symbol)`**: Returns real-time price info (c, h, l, o, pc).
   - *Example Return*: `{"current_price": 150.5, "change": 2.1, ...}`
 - **`get_company_profile(symbol)`**: Returns industry, market cap, and IPO details.
@@ -40,6 +43,7 @@ Intelligent agent for financial analysis conversation.
 from src.rag.analyst_chat import AnalystChatbot
 
 bot = AnalystChatbot()
+# Ticker is automatically detected from the query
 response = bot.chat("How is Apple doing?")
 ```
 
