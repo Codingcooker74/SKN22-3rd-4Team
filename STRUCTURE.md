@@ -6,152 +6,92 @@
 SKN22-3rd-4Team/
 ├── app.py                          # Main Streamlit application
 ├── requirements.txt                # Python dependencies
-├── .env                           # Environment variables (git-ignored)
-├── .env.example                   # Environment variables template
+├── .env                           # Environment variables
 ├── .gitignore                     # Git ignore rules
 ├── README.md                      # Project documentation
 │
 ├── config/                        # Configuration files
-│   ├── settings.py               # Application settings
-│   └── logging_config.py         # Logging configuration
+│   └── settings.py               # Application settings (General)
+│
+├── models/                        # Model settings
+│   └── settings.py               # AI Model configurations (LLM, Embeddings)
 │
 ├── src/                          # Source code
-│   ├── core/                     # Core business logic
-│   │   └── (future core modules)
+│   ├── data/                     # Data Access Layer
+│   │   ├── finnhub_client.py    # Finnhub API Client (Market/Financial Data)
+│   │   └── supabase_client.py   # Supabase DB Client
 │   │
-│   ├── data/                     # Data collection and processing
-│   │   ├── sec_collector.py     # SEC EDGAR data downloader
-│   │   └── filing_processor.py  # Filing parser and processor
+│   ├── rag/                      # RAG & AI Logic
+│   │   ├── analyst_chat.py      # Investment Analyst Chatbot Logic
+│   │   ├── graph_rag.py         # GraphRAG Implementation
+│   │   ├── report_generator.py  # Investment Report Generator
+│   │   └── vector_store.py      # Vector Store Operations
 │   │
-│   ├── rag/                      # RAG (Retrieval Augmented Generation)
-│   │   ├── graph_rag.py         # GraphRAG implementation
-│   │   └── vector_store.py      # Vector database operations
+│   ├── sql/                      # SQL Generation
+│   │   └── text_to_sql.py       # NL to SQL
 │   │
-│   ├── sql/                      # SQL and database
-│   │   └── text_to_sql.py       # Natural language to SQL converter
+│   ├── ui/                       # Streamlit UI
+│   │   └── pages/               
+│   │       ├── home.py          
+│   │       ├── graph_analysis.py   
+│   │       ├── sql_query.py     
+│   │       └── insights.py      # Main Analysis & Chat Interface
 │   │
-│   ├── ui/                       # Streamlit UI components
-│   │   └── pages/               # Page modules
-│   │       ├── home.py          # Home page
-│   │       ├── data_collection.py  # Data collection page
-│   │       ├── graph_analysis.py   # Graph analysis page
-│   │       ├── sql_query.py     # SQL query page
-│   │       └── insights.py      # Investment insights page
-│   │
-│   └── utils/                    # Utility functions
-│       ├── helpers.py           # General helpers
-│       └── financial_calcs.py   # Financial calculations
+│   └── utils/                    # Utilities
 │
-├── tests/                        # Test suite
-│   ├── unit/                    # Unit tests
-│   │   ├── test_graph_rag.py
-│   │   └── test_text_to_sql.py
-│   └── integration/             # Integration tests
-│       └── (future integration tests)
-│
-├── data/                        # Data storage
-│   ├── raw/                    # Raw SEC filings
-│   ├── processed/              # Processed data
-│   └── vector_store/           # Vector database storage
-│
-├── models/                      # Trained models storage
-│   └── (model checkpoints)
-│
-└── notebooks/                   # Jupyter notebooks for analysis
-    └── (analysis notebooks)
+└── notebooks/                   # Jupyter notebooks
 ```
 
 ## 🔧 Module Descriptions
 
-### Core Modules
+### Core & Configuration
 
-#### `app.py`
-- Main Streamlit application entry point
-- Navigation and routing
-- Custom styling and CSS
-- Settings management
+#### `models/settings.py`
 
-#### `config/`
-- **settings.py**: Centralized configuration using Pydantic
-- **logging_config.py**: Logging setup and configuration
+- Centralized configuration for AI models (LLMs, Embeddings).
+- Manages API keys and model parameters.
 
-### Data Layer
+### Data Layer (`src/data`)
 
-#### `src/data/`
-- **sec_collector.py**: Downloads SEC EDGAR filings (10-K, 10-Q, 8-K)
-- **filing_processor.py**: Parses and extracts structured data from filings
+#### `finnhub_client.py`
 
-### RAG Layer
+- Handles communication with Finnhub API.
+- Retrieves stock quotes, company profiles, news, and financial metrics.
 
-#### `src/rag/`
-- **graph_rag.py**: GraphRAG implementation for relationship analysis
-  - Entity extraction
-  - Relationship identification
-  - Knowledge graph construction
-  - Graph querying
-  
-- **vector_store.py**: Vector database operations using ChromaDB
-  - Document embeddings
-  - Semantic search
-  - Similarity queries
+#### `supabase_client.py`
 
-### SQL Layer
+- Manages connection to Supabase PostgreSQL.
+- Handles data retrieval for companies and financial reports.
 
-#### `src/sql/`
-- **text_to_sql.py**: Natural language to SQL conversion
-  - Schema management
-  - Query generation using LLM
-  - Query execution
-  - Result formatting
+### RAG Layer (`src/rag`)
 
-### UI Layer
+#### `analyst_chat.py`
 
-#### `src/ui/pages/`
-- **home.py**: Landing page with overview
-- **data_collection.py**: SEC filing download interface
-- **graph_analysis.py**: Knowledge graph exploration
-- **sql_query.py**: Natural language query interface
-- **insights.py**: AI-powered investment recommendations
+- Implements the "AI Financial Analyst" chatbot.
+- Contextualizes user queries with RAG (Retrieval Augmented Generation).
+- Integrates real-time data from Finnhub.
 
-### Utilities
+#### `report_generator.py`
 
-#### `src/utils/`
-- **helpers.py**: General utility functions
-- **financial_calcs.py**: Financial ratio calculations
+- Generates structured investment reports using `gpt-5-nano` (with `gpt-4o-mini` fallback).
+- Combines database financials and real-time market data.
 
-### Tests
+#### `graph_rag.py`
 
-#### `tests/`
-- **unit/**: Unit tests for individual modules
-- **integration/**: Integration tests for workflows
+- Implements Graph Retrieval Augmented Generation.
+- Analyzes relationships between companies (supply chain, competitors).
 
-## 🚀 Next Steps
+#### `vector_store.py`
 
-1. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+- Manages semantic search functionality using Supabase pgvector.
 
-2. **Configure environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your API keys
-   ```
+### UI Layer (`src/ui`)
 
-3. **Run the application**:
-   ```bash
-   streamlit run app.py
-   ```
+#### `metrics.py` / `charts.py`
 
-4. **Run tests**:
-   ```bash
-   pytest tests/
-   ```
+- Reusable UI components for displaying financial data.
 
-## 📝 Notes
+#### `insights.py`
 
-- Python 3.12+ is required
-- No `__init__.py` files needed (implicit namespace packages)
-- All modules use absolute imports from `src/`
-- Configuration is managed through environment variables
-- Logging is centralized through the logging config
+- The core interaction page for users.
+- Hosting the Chatbot and Report Generator interfaces.

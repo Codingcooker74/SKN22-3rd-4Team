@@ -66,8 +66,10 @@ data/vector_store/*
 *.sqlite3
 
 # Models
+# Models
 models/*
 !models/.gitkeep
+!models/*.py
 *.pkl
 *.h5
 *.pth

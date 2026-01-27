@@ -1,312 +1,330 @@
 """
-GraphRAG implementation for analyzing relationships between companies
+GraphRAG implementation using existing Supabase schema
+Uses: companies, company_relationships, documents tables
 """
+
+import os
+import json
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 import networkx as nx
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
+from openai import OpenAI
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 
 class GraphRAG:
     """
-    Graph-based Retrieval Augmented Generation
-    Builds and queries knowledge graphs from financial documents
+    Graph-based RAG using existing Supabase tables:
+    - companies: 회사 정보
+    - company_relationships: 회사 간 관계
+    - documents: 벡터 문서
     """
-    
+
     def __init__(
-        self,
-        embedding_model: str = "text-embedding-3-small",
-        llm_model: str = "gpt-4-turbo-preview",
-        api_key: Optional[str] = None
+        self, embedding_model: str = "text-embedding-3-small", llm_model: str = "gpt-4o-mini"
     ):
-        """
-        Initialize GraphRAG
-        
-        Args:
-            embedding_model: Model for generating embeddings
-            llm_model: LLM model for generating responses
-            api_key: OpenAI API key
-        """
-        self.embeddings = OpenAIEmbeddings(
-            model=embedding_model,
-            openai_api_key=api_key
-        )
-        self.llm = ChatOpenAI(
-            model=llm_model,
+        """Initialize GraphRAG with Supabase"""
+
+        # OpenAI client
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY 환경 변수가 필요합니다.")
+
+        self.openai_client = OpenAI(api_key=self.openai_api_key)
+        self.embedding_model = embedding_model
+        self.llm_model = llm_model
+
+        # Supabase client
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+
+        if not supabase_url or not supabase_key:
+            raise ValueError("SUPABASE_URL과 SUPABASE_KEY 환경 변수가 필요합니다.")
+
+        self.supabase: Client = create_client(supabase_url, supabase_key)
+
+        # Local graph for analysis
+        self.local_graph = nx.DiGraph()
+
+        logger.info("GraphRAG initialized with Supabase")
+
+    def _get_embedding(self, text: str) -> List[float]:
+        """Generate embedding for text"""
+        response = self.openai_client.embeddings.create(model=self.embedding_model, input=text)
+        return response.data[0].embedding
+
+    def _chat_completion(self, system_prompt: str, user_prompt: str) -> str:
+        """Get chat completion from OpenAI"""
+        response = self.openai_client.chat.completions.create(
+            model=self.llm_model,
             temperature=0.1,
-            openai_api_key=api_key
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
         )
-        self.graph = nx.DiGraph()
-        
-    def extract_entities_and_relationships(
-        self,
-        text: str,
-        company_context: Optional[str] = None
-    ) -> Dict:
-        """
-        Extract entities (companies, products, people) and relationships from text
-        
-        Args:
-            text: Input text to analyze
-            company_context: Optional context about the company
-            
-        Returns:
-            Dictionary with entities and relationships
-        """
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert financial analyst. Extract entities and relationships from financial documents.
-            
-            Entities to extract:
-            - Companies (and their tickers)
-            - Products/Services
-            - People (executives, board members)
-            - Locations
-            - Financial metrics
-            
-            Relationships to identify:
-            - Partnerships
-            - Acquisitions
-            - Supplier/Customer relationships
-            - Competitor relationships
-            - Investment relationships
-            
-            Return the result in JSON format with lists of entities and relationships.
-            """),
-            ("user", "Company Context: {context}\n\nText to analyze:\n{text}")
-        ])
-        
+        return response.choices[0].message.content
+
+    def extract_relationships(self, text: str, source_ticker: Optional[str] = None) -> List[Dict]:
+        """Extract company relationships from text using LLM"""
+
+        system_prompt = """You are a financial analyst. Extract company relationships from text.
+
+Relationship types: partnership, acquisition, supplier, customer, competitor, subsidiary, investment
+
+Return JSON only:
+[{"source_company": "...", "source_ticker": "...", "target_company": "...", "target_ticker": "...", 
+  "relationship_type": "...", "confidence": 0.8}]"""
+
+        user_prompt = f"Source Company Ticker: {source_ticker or 'Unknown'}\n\nText:\n{text[:3000]}"
+
         try:
-            chain = prompt | self.llm
-            response = chain.invoke({
-                "context": company_context or "General analysis",
-                "text": text
-            })
-            
-            # Parse the response and structure it
-            # This is simplified - in production, use structured output
-            return {
-                "entities": [],
-                "relationships": [],
-                "raw_response": response.content
-            }
-            
+            response = self._chat_completion(system_prompt, user_prompt)
+
+            # Clean JSON
+            response = response.strip()
+            if response.startswith("```"):
+                response = response.split("```")[1]
+                if response.startswith("json"):
+                    response = response[4:]
+
+            return json.loads(response.strip())
+
         except Exception as e:
-            logger.error(f"Error extracting entities: {str(e)}")
-            return {"entities": [], "relationships": []}
-    
-    def build_knowledge_graph(
-        self,
-        documents: List[Dict],
-        chunk_size: int = 1000
-    ) -> nx.DiGraph:
-        """
-        Build a knowledge graph from documents
-        
-        Args:
-            documents: List of document dictionaries with text content
-            chunk_size: Size of text chunks for processing
-            
-        Returns:
-            NetworkX directed graph
-        """
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=chunk_size,
-            chunk_overlap=200
+            logger.error(f"Extraction error: {e}")
+            return []
+
+    def save_relationships(
+        self, relationships: List[Dict], extracted_from: str = None, filing_date: str = None
+    ) -> int:
+        """Save relationships to company_relationships table"""
+        if not relationships:
+            return 0
+
+        records = []
+        for rel in relationships:
+            records.append(
+                {
+                    "source_company": rel.get("source_company", ""),
+                    "source_ticker": rel.get("source_ticker", ""),
+                    "target_company": rel.get("target_company", ""),
+                    "target_ticker": rel.get("target_ticker", ""),
+                    "relationship_type": rel.get("relationship_type", "related"),
+                    "confidence": rel.get("confidence", 0.5),
+                    "extracted_from": extracted_from,
+                    "filing_date": filing_date,
+                }
+            )
+
+        try:
+            self.supabase.table("company_relationships").insert(records).execute()
+            return len(records)
+        except Exception as e:
+            logger.error(f"Error saving relationships: {e}")
+            return 0
+
+    def find_relationships(self, ticker: str, relationship_type: Optional[str] = None) -> Dict:
+        """Find relationships for a company by ticker"""
+        try:
+            # Outgoing relationships (source)
+            query = (
+                self.supabase.table("company_relationships").select("*").eq("source_ticker", ticker)
+            )
+            if relationship_type:
+                query = query.eq("relationship_type", relationship_type)
+            outgoing = query.execute().data
+
+            # Incoming relationships (target)
+            query = (
+                self.supabase.table("company_relationships").select("*").eq("target_ticker", ticker)
+            )
+            if relationship_type:
+                query = query.eq("relationship_type", relationship_type)
+            incoming = query.execute().data
+
+            return {
+                "ticker": ticker,
+                "outgoing": outgoing,
+                "incoming": incoming,
+                "total": len(outgoing) + len(incoming),
+            }
+
+        except Exception as e:
+            logger.error(f"Error finding relationships: {e}")
+            return {"ticker": ticker, "outgoing": [], "incoming": [], "error": str(e)}
+
+    def get_company(self, ticker: str) -> Optional[Dict]:
+        """Get company info by ticker"""
+        try:
+            result = self.supabase.table("companies").select("*").eq("ticker", ticker).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            logger.error(f"Error getting company: {e}")
+            return None
+
+    def search_companies(self, query: str, limit: int = 10) -> List[Dict]:
+        """Search companies by name"""
+        try:
+            result = (
+                self.supabase.table("companies")
+                .select("*")
+                .ilike("company_name", f"%{query}%")
+                .limit(limit)
+                .execute()
+            )
+            return result.data
+        except Exception as e:
+            logger.error(f"Error searching companies: {e}")
+            return []
+
+    def get_company_network(self, ticker: str, depth: int = 1) -> Dict:
+        """Get company relationship network"""
+        visited = set()
+        network = {"nodes": [], "edges": []}
+
+        def traverse(current_ticker: str, current_depth: int):
+            if current_depth > depth or current_ticker in visited:
+                return
+            visited.add(current_ticker)
+
+            # Add node
+            company = self.get_company(current_ticker)
+            if company:
+                network["nodes"].append(
+                    {
+                        "id": current_ticker,
+                        "name": company.get("company_name", current_ticker),
+                        "sector": company.get("sector", ""),
+                    }
+                )
+
+            # Get relationships
+            rels = self.find_relationships(current_ticker)
+
+            for rel in rels.get("outgoing", []):
+                target = rel.get("target_ticker")
+                if target:
+                    network["edges"].append(
+                        {
+                            "source": current_ticker,
+                            "target": target,
+                            "type": rel.get("relationship_type", "related"),
+                        }
+                    )
+                    traverse(target, current_depth + 1)
+
+            for rel in rels.get("incoming", []):
+                source = rel.get("source_ticker")
+                if source:
+                    network["edges"].append(
+                        {
+                            "source": source,
+                            "target": current_ticker,
+                            "type": rel.get("relationship_type", "related"),
+                        }
+                    )
+                    traverse(source, current_depth + 1)
+
+        traverse(ticker, 0)
+        return network
+
+    def query_with_context(self, query: str, ticker: Optional[str] = None) -> Dict:
+        """Query with relationship context"""
+
+        # Get context
+        context_parts = []
+
+        if ticker:
+            # Company info
+            company = self.get_company(ticker)
+            if company:
+                context_parts.append(f"Company: {company.get('company_name')} ({ticker})")
+                context_parts.append(f"Sector: {company.get('sector', 'N/A')}")
+                context_parts.append(f"Industry: {company.get('industry', 'N/A')}")
+
+            # Relationships
+            rels = self.find_relationships(ticker)
+            if rels["total"] > 0:
+                context_parts.append("\nRelationships:")
+                for rel in rels.get("outgoing", [])[:10]:
+                    context_parts.append(
+                        f"  → {rel['relationship_type']}: {rel['target_company']} ({rel.get('target_ticker', '')})"
+                    )
+                for rel in rels.get("incoming", [])[:10]:
+                    context_parts.append(
+                        f"  ← {rel['relationship_type']}: {rel['source_company']} ({rel.get('source_ticker', '')})"
+                    )
+
+        context_str = (
+            "\n".join(context_parts) if context_parts else "No specific context available."
         )
-        
-        for doc in documents:
-            text = doc.get("text_content", "")
-            company = doc.get("ticker", "UNKNOWN")
-            
-            # Split into chunks
-            chunks = text_splitter.split_text(text)
-            
-            for chunk in chunks:
-                # Extract entities and relationships
-                result = self.extract_entities_and_relationships(
-                    chunk,
-                    company_context=company
-                )
-                
-                # Add to graph
-                self._add_to_graph(result, source_doc=doc)
-        
-        logger.info(f"Built graph with {self.graph.number_of_nodes()} nodes "
-                   f"and {self.graph.number_of_edges()} edges")
-        
-        return self.graph
-    
-    def _add_to_graph(self, extraction_result: Dict, source_doc: Dict):
-        """Add extracted entities and relationships to the graph"""
-        # Add entities as nodes
-        for entity in extraction_result.get("entities", []):
-            entity_id = entity.get("id") or entity.get("name")
-            if entity_id:
-                self.graph.add_node(
-                    entity_id,
-                    type=entity.get("type"),
-                    metadata=entity.get("metadata", {}),
-                    source=source_doc.get("file_path")
-                )
-        
-        # Add relationships as edges
-        for rel in extraction_result.get("relationships", []):
-            source = rel.get("source")
-            target = rel.get("target")
-            rel_type = rel.get("type")
-            
-            if source and target:
-                self.graph.add_edge(
-                    source,
-                    target,
-                    type=rel_type,
-                    weight=rel.get("confidence", 1.0),
-                    metadata=rel.get("metadata", {})
-                )
-    
-    def query_graph(
-        self,
-        query: str,
-        max_depth: int = 3,
-        top_k: int = 5
-    ) -> Dict:
-        """
-        Query the knowledge graph
-        
-        Args:
-            query: Natural language query
-            max_depth: Maximum depth for graph traversal
-            top_k: Number of top results to return
-            
-        Returns:
-            Query results with relevant subgraph
-        """
-        # Generate embedding for query
-        query_embedding = self.embeddings.embed_query(query)
-        
-        # Find relevant nodes (simplified)
-        relevant_nodes = self._find_relevant_nodes(query, top_k)
-        
-        # Extract subgraph
-        subgraph = self._extract_subgraph(relevant_nodes, max_depth)
-        
-        # Generate response using LLM
-        response = self._generate_graph_response(query, subgraph)
-        
-        return {
-            "query": query,
-            "response": response,
-            "relevant_nodes": relevant_nodes,
-            "subgraph": subgraph
-        }
-    
-    def _find_relevant_nodes(self, query: str, top_k: int) -> List[str]:
-        """Find nodes most relevant to the query"""
-        # Simplified - would use embeddings and similarity search
-        return list(self.graph.nodes())[:top_k]
-    
-    def _extract_subgraph(
-        self,
-        nodes: List[str],
-        max_depth: int
-    ) -> nx.DiGraph:
-        """Extract a subgraph around the given nodes"""
-        subgraph_nodes = set(nodes)
-        
-        for node in nodes:
-            # Get neighbors up to max_depth
-            try:
-                neighbors = nx.single_source_shortest_path_length(
-                    self.graph,
-                    node,
-                    cutoff=max_depth
-                )
-                subgraph_nodes.update(neighbors.keys())
-            except nx.NodeNotFound:
-                continue
-        
-        return self.graph.subgraph(subgraph_nodes).copy()
-    
-    def _generate_graph_response(
-        self,
-        query: str,
-        subgraph: nx.DiGraph
-    ) -> str:
-        """Generate a response based on the query and subgraph"""
-        # Convert subgraph to text description
-        graph_context = self._subgraph_to_text(subgraph)
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a financial analyst assistant. Answer the question based on the knowledge graph context provided.
-            Be specific and cite relationships and entities from the graph.
-            """),
-            ("user", "Graph Context:\n{context}\n\nQuestion: {query}")
-        ])
-        
-        chain = prompt | self.llm
-        response = chain.invoke({
-            "context": graph_context,
-            "query": query
-        })
-        
-        return response.content
-    
-    def _subgraph_to_text(self, subgraph: nx.DiGraph) -> str:
-        """Convert subgraph to text description"""
-        descriptions = []
-        
-        # Describe nodes
-        for node in subgraph.nodes(data=True):
-            node_id, data = node
-            node_type = data.get("type", "Entity")
-            descriptions.append(f"{node_type}: {node_id}")
-        
-        # Describe edges
-        for edge in subgraph.edges(data=True):
-            source, target, data = edge
-            rel_type = data.get("type", "related to")
-            descriptions.append(f"{source} {rel_type} {target}")
-        
-        return "\n".join(descriptions)
-    
-    def analyze_company_relationships(
-        self,
-        company: str,
-        relationship_types: Optional[List[str]] = None
-    ) -> Dict:
-        """
-        Analyze relationships for a specific company
-        
-        Args:
-            company: Company ticker or name
-            relationship_types: Types of relationships to analyze
-            
-        Returns:
-            Analysis results
-        """
-        if company not in self.graph:
-            return {"error": f"Company {company} not found in graph"}
-        
-        # Get all relationships
-        relationships = {
-            "outgoing": list(self.graph.successors(company)),
-            "incoming": list(self.graph.predecessors(company))
-        }
-        
-        # Calculate centrality metrics
-        centrality = {
-            "degree": nx.degree_centrality(self.graph).get(company, 0),
-            "betweenness": nx.betweenness_centrality(self.graph).get(company, 0),
-            "pagerank": nx.pagerank(self.graph).get(company, 0)
-        }
-        
-        return {
-            "company": company,
-            "relationships": relationships,
-            "centrality": centrality,
-            "total_connections": len(relationships["outgoing"]) + len(relationships["incoming"])
-        }
+
+        # Generate response
+        system_prompt = """You are a financial analyst assistant. Answer based on the company and relationship context.
+Be specific and cite relationships when relevant. Answer in Korean."""
+
+        user_prompt = f"Context:\n{context_str}\n\nQuestion: {query}"
+
+        response = self._chat_completion(system_prompt, user_prompt)
+
+        return {"query": query, "ticker": ticker, "response": response, "context": context_str}
+
+    def get_stats(self) -> Dict:
+        """Get statistics"""
+        stats = {}
+
+        try:
+            companies = self.supabase.table("companies").select("id", count="exact").execute()
+            relationships = (
+                self.supabase.table("company_relationships").select("id", count="exact").execute()
+            )
+            documents = self.supabase.table("documents").select("id", count="exact").execute()
+
+            stats = {
+                "companies": companies.count or 0,
+                "relationships": relationships.count or 0,
+                "documents": documents.count or 0,
+            }
+        except Exception as e:
+            stats["error"] = str(e)
+
+        return stats
+
+
+# LangGraph Tool function
+def graph_search_tool(query: str, ticker: str = None) -> str:
+    """
+    회사 관계 그래프에서 정보를 검색합니다.
+    LangGraph Tool로 사용됩니다.
+    """
+    try:
+        graph_rag = GraphRAG()
+        result = graph_rag.query_with_context(query, ticker)
+        return result.get("response", "관련 정보를 찾을 수 없습니다.")
+    except Exception as e:
+        logger.error(f"Graph search error: {e}")
+        return f"검색 오류: {e}"
+
+
+if __name__ == "__main__":
+    print("🔄 GraphRAG 초기화 중...")
+
+    try:
+        graph_rag = GraphRAG()
+        stats = graph_rag.get_stats()
+
+        print(f"✅ GraphRAG 초기화 성공!")
+        print(f"   Companies: {stats.get('companies', 'N/A')}")
+        print(f"   Relationships: {stats.get('relationships', 'N/A')}")
+        print(f"   Documents: {stats.get('documents', 'N/A')}")
+
+        if "error" in stats:
+            print(f"   ⚠️ Error: {stats['error']}")
+
+    except Exception as e:
+        print(f"❌ 오류: {e}")

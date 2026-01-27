@@ -1,135 +1,143 @@
--- ==========================================
--- Supabase 전체 테이블 생성 스크립트
--- ==========================================
--- 이 파일을 Supabase SQL Editor에서 실행하세요
+-- Supabase Database Schema
+-- Last Updated: 2026-01-27
 
--- ==========================================
--- 1. 확장 기능 활성화 (Extensions)
--- ==========================================
-create extension if not exists "uuid-ossp";
-
--- ==========================================
--- 2. 기업 기본 정보 테이블 (Companies)
--- ==========================================
-create table if not exists companies (
-    id uuid primary key default uuid_generate_v4(),
-    ticker text unique not null,
-    company_name text not null,
+-- 1. Companies Table
+CREATE TABLE public.companies (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    ticker text NOT NULL UNIQUE,
+    company_name text NOT NULL,
     cik text,
     industry text,
     sector text,
     description text,
     logo_url text,
     market_cap numeric,
-    employees int,
+    employees integer,
     exchange text,
     website text,
-    created_at timestamp with time zone default now()
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        founded_year integer,
+        headquarters text,
+        CONSTRAINT companies_pkey PRIMARY KEY (id)
 );
 
-comment on table companies is '미국 상장 기업의 기본 메타데이터를 저장하는 테이블';
-
--- ==========================================
--- 3. 연간 재무 데이터 테이블 (Annual_Reports)
--- ==========================================
-create table if not exists annual_reports (
-    id uuid primary key default uuid_generate_v4(),
-    company_id uuid references companies(id) on delete cascade,
-    
-    fiscal_year int not null,
+-- 2. Annual Reports Table
+CREATE TABLE public.annual_reports (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    company_id uuid,
+    fiscal_year integer NOT NULL,
     period_ended date,
-    
-    -- 손익계산서
     revenue numeric,
     cost_of_revenue numeric,
     gross_profit numeric,
     operating_income numeric,
     net_income numeric,
     eps numeric,
-    
-    -- 재무상태표
     total_assets numeric,
     total_liabilities numeric,
     stockholders_equity numeric,
-    
-    -- 현금흐름표
     operating_cash_flow numeric,
     investing_cash_flow numeric,
     financing_cash_flow numeric,
-    
-    -- 재무비율
     profit_margin numeric,
     roe numeric,
     roa numeric,
     debt_to_equity numeric,
     current_ratio numeric,
-    
-    created_at timestamp with time zone default now(),
-    updated_at timestamp with time zone default now(),
-    
-    unique(company_id, fiscal_year)
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        updated_at timestamp
+    with
+        time zone DEFAULT now (),
+        CONSTRAINT annual_reports_pkey PRIMARY KEY (id),
+        CONSTRAINT annual_reports_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies (id)
 );
 
-comment on table annual_reports is '10-K 기반 연간 재무제표 데이터를 저장하는 테이블';
-
--- ==========================================
--- 4. 분기별 재무 데이터 테이블 (Quarterly_Reports)
--- ==========================================
-create table if not exists quarterly_reports (
-    id uuid primary key default uuid_generate_v4(),
-    company_id uuid references companies(id) on delete cascade,
-    
-    fiscal_year int not null,
-    fiscal_quarter int not null,
-    period_ended date not null,
-    
+-- 3. Quarterly Reports Table
+CREATE TABLE public.quarterly_reports (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    company_id uuid,
+    fiscal_year integer NOT NULL,
+    fiscal_quarter integer NOT NULL,
+    period_ended date NOT NULL,
     revenue numeric,
     gross_profit numeric,
     operating_income numeric,
     net_income numeric,
     eps numeric,
     operating_cash_flow numeric,
-    
-    created_at timestamp with time zone default now(),
-    
-    unique(company_id, fiscal_year, fiscal_quarter)
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        CONSTRAINT quarterly_reports_pkey PRIMARY KEY (id),
+        CONSTRAINT quarterly_reports_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies (id)
 );
 
-comment on table quarterly_reports is '정확한 수치 계산을 위해 구조화된 재무 제표 데이터를 저장하는 테이블';
+-- 4. Stock Prices Table
+CREATE TABLE public.stock_prices (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    company_id uuid,
+    price_date date NOT NULL,
+    open_price numeric,
+    high_price numeric,
+    low_price numeric,
+    close_price numeric,
+    adjusted_close numeric,
+    volume bigint,
+    market_cap numeric,
+    pe_ratio numeric,
+    pb_ratio numeric,
+    ps_ratio numeric,
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        CONSTRAINT stock_prices_pkey PRIMARY KEY (id),
+        CONSTRAINT stock_prices_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies (id)
+);
 
--- ==========================================
--- 5. 벡터 데이터 테이블 (Document_Sections)
--- ==========================================
--- 참고: vector 확장이 필요합니다. Supabase에서는 기본 제공됩니다.
-create table if not exists document_sections (
-    id uuid primary key default uuid_generate_v4(),
-    company_id uuid references companies(id) on delete cascade,
-    
-    content text not null,
+-- 5. Company Relationships Table (GraphRAG)
+CREATE TABLE public.company_relationships (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    source_company text NOT NULL,
+    source_ticker text,
+    target_company text NOT NULL,
+    target_ticker text,
+    relationship_type text NOT NULL,
+    confidence numeric DEFAULT 0.5,
+    extracted_from text,
+    filing_date date,
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        CONSTRAINT company_relationships_pkey PRIMARY KEY (id)
+);
+
+-- 6. Document Sections Table
+CREATE TABLE public.document_sections (
+    id uuid NOT NULL DEFAULT uuid_generate_v4 (),
+    company_id uuid,
+    content text NOT NULL,
     section_name text,
     report_type text,
     report_date date,
-    
-    -- OpenAI text-embedding-3-small 모델 기준 (1536차원)
-    -- embedding vector(1536),
-    
     metadata jsonb,
-    created_at timestamp with time zone default now()
+    created_at timestamp
+    with
+        time zone DEFAULT now (),
+        ticker text,
+        filing_date date,
+        CONSTRAINT document_sections_pkey PRIMARY KEY (id),
+        CONSTRAINT document_sections_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies (id)
 );
 
-comment on table document_sections is '공시 문서(PDF/HTML)를 조각내어 벡터 임베딩과 함께 저장하는 테이블';
-
--- ==========================================
--- 6. 인덱스 생성
--- ==========================================
-create index if not exists idx_annual_reports_company on annual_reports(company_id);
-create index if not exists idx_annual_reports_year on annual_reports(fiscal_year);
-create index if not exists idx_quarterly_reports_company on quarterly_reports(company_id);
-create index if not exists idx_quarterly_reports_year on quarterly_reports(fiscal_year);
-create index if not exists idx_document_sections_company on document_sections(company_id);
-create index if not exists idx_companies_cik on companies(cik);
-
--- ==========================================
--- 완료 메시지
--- ==========================================
--- 테이블 생성이 완료되었습니다!
+-- 7. Documents Table (Vector Store)
+CREATE TABLE public.documents (
+    id uuid NOT NULL,
+    content text,
+    metadata jsonb,
+    embedding USER - DEFINED, -- pgvector type
+    CONSTRAINT documents_pkey PRIMARY KEY (id)
+);
