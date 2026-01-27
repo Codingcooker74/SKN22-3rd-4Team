@@ -95,20 +95,29 @@ def render_chatbot():
 
                     # Check for downloadable report
                     if msg.get("report"):
-                        try:
-                            pdf_bytes = create_pdf(msg["report"])
+                        # Check if backend already specified the type
+                        report_type = msg.get("report_type", "md")
+
+                        if report_type == "pdf":
+                            # Backend already converted to PDF
+                            report_data = msg["report"]
                             mime_type = "application/pdf"
                             file_ext = "pdf"
                             label = "📥 분석 레포트 다운로드 (PDF)"
-                        except Exception:
-                            pdf_bytes = msg["report"].encode("utf-8")
+                        else:
+                            # Markdown format
+                            report_data = (
+                                msg["report"].encode("utf-8")
+                                if isinstance(msg["report"], str)
+                                else msg["report"]
+                            )
                             mime_type = "text/markdown"
                             file_ext = "md"
                             label = "📥 분석 레포트 다운로드 (MD)"
 
                         st.download_button(
                             label=label,
-                            data=pdf_bytes,
+                            data=report_data,
                             file_name=f"analysis_report_{i}.{file_ext}",
                             mime=mime_type,
                             key=f"chat_dl_{i}",
@@ -141,13 +150,20 @@ def render_chatbot():
             if isinstance(result, dict):
                 content = result["content"]
                 report = result.get("report")
+                report_type = result.get("report_type", "md")
             else:
                 content = result
                 report = None
+                report_type = "md"
 
-            # Add assistant message
+            # Add assistant message with report and report_type
             st.session_state.chat_history.append(
-                {"role": "assistant", "content": content, "report": report}
+                {
+                    "role": "assistant",
+                    "content": content,
+                    "report": report,
+                    "report_type": report_type,
+                }
             )
 
             # Rerun to update chat history in container

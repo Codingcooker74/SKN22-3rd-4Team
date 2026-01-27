@@ -10,6 +10,7 @@ from typing import List, Dict, Optional, Any
 from openai import OpenAI
 from supabase import create_client, Client
 import json
+import re
 from dotenv import load_dotenv
 
 # Import Finnhub client
@@ -661,6 +662,15 @@ class AnalystChatbot:
                         }
                     )
 
+                    # Extract ticker for report generation if needed
+                    if not tickers and "ticker" in function_args:
+                        collected_ticker = function_args["ticker"]
+                        if (
+                            isinstance(collected_ticker, str)
+                            and len(collected_ticker) <= 5
+                        ):
+                            tickers.append(collected_ticker.upper())
+
                 # Second Call (Final Response)
                 final_response = self.openai_client.chat.completions.create(
                     model=self.model, messages=messages, max_completion_tokens=2000
@@ -679,23 +689,55 @@ class AnalystChatbot:
                     "파일",
                     "report",
                     "자료",
+                    "pdf",
+                    "피디에프",
                 ]
             )
-            report_content = None
+
+            # Initialize report variables outside conditional
+            report_data = None
+            report_type = "md"
+
             if generate_report:
-                # Try to extract ticker from tool calls or context
                 target_ticker = None
                 if tickers:
                     target_ticker = tickers[0]
-                # If no legacy ticker, we can't generate report easily unless we parse tool args again.
-                # For now, rely on explicit ticker input from UI or robust interaction.
+
+                if tickers:
+                    tickers = list(dict.fromkeys(tickers))
+
+                # 3. If still no ticker, look back at recent conversation history
+                if not target_ticker:
+                    # Look for tickers in previous messages
+                    for hist_msg in reversed(self.conversation_history):
+                        # Search for 2-5 capital letters (Ticker format)
+                        matches = re.findall(r"\b[A-Z]{2,5}\b", hist_msg["content"])
+                        if matches:
+                            target_ticker = matches[0]
+                            break
 
                 if target_ticker:
                     from rag.report_generator import ReportGenerator
+                    from utils.pdf_utils import create_pdf
 
                     generator = ReportGenerator()
-                    report_content = generator.generate_report(target_ticker)
-                    assistant_message += "\n\n(요청하신 분석 자료를 생성했습니다. 아래 버튼으로 다운로드하세요.)"
+                    report_markdown = generator.generate_report(target_ticker)
+
+                    # Try to convert to PDF
+                    try:
+                        pdf_bytes = create_pdf(report_markdown)
+                        report_data = pdf_bytes
+                        report_type = "pdf"
+                        assistant_message += f"\n\n(요청하신 {target_ticker} 분석 보고서를 PDF로 생성했습니다. 하단 버튼으로 다운로드하세요.)"
+                    except Exception as e:
+                        logger.warning(
+                            f"PDF creation failed: {e}. Falling back to Markdown."
+                        )
+                        report_data = report_markdown
+                        report_type = "md"
+                        assistant_message += f"\n\n(PDF 생성 중 문제가 발생하여 마크다운(.md) 답변 자료를 준비했습니다. 하단 버튼으로 다운로드하세요.)"
+                else:
+                    assistant_message += "\n\n(어떤 기업에 대한 보고서가 필요하신가요? 기업 이름이나 티커를 말씀해 주세요.)"
 
             # Update history
             self.conversation_history.append({"role": "user", "content": message})
@@ -705,7 +747,8 @@ class AnalystChatbot:
 
             return {
                 "content": assistant_message,
-                "report": report_content,
+                "report": report_data,
+                "report_type": report_type,
                 "tickers": tickers,
             }
 

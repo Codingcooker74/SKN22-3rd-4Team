@@ -7,6 +7,7 @@ openai>=1.12.0
 langchain>=0.1.9
 langchain-community>=0.0.24
 langchain-openai>=0.0.6
+mcp>=1.0.0
 
 # Graph
 networkx>=3.2.1
@@ -25,4 +26,5 @@ beautifulsoup4>=4.12.3
 pydantic>=2.6.1
 matplotlib>=3.8.2
 plotly>=5.18.0
-fpdf2>=2.7.7
+reportlab>=4.0.0
+finnhub-python>=2.4.19

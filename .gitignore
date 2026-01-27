@@ -98,3 +98,8 @@ htmlcov/
 
 # ChromaDB
 chroma/
+
+# Fonts (users should download separately)
+fonts/*.ttf
+fonts/*.ttc
+fonts/*.otf
