@@ -1,233 +1,220 @@
 """
-Investment insights page for AI-powered recommendations
+Investment insights page with AI Analyst Chatbot and Report Generator
 """
+
 import streamlit as st
-import pandas as pd
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+try:
+    from rag.analyst_chat import AnalystChatbot
+    from rag.report_generator import ReportGenerator
+
+    RAG_AVAILABLE = True
+except ImportError as e:
+    RAG_AVAILABLE = False
+    IMPORT_ERROR = str(e)
 
 
 def render():
     """Render the investment insights page"""
-    
-    st.markdown('<h1 class="main-header">💡 Investment Insights</h1>', 
-                unsafe_allow_html=True)
-    
-    st.markdown("AI-powered analysis and investment recommendations based on financial data")
-    
+
+    st.markdown('<h1 class="main-header">💡 투자 인사이트</h1>', unsafe_allow_html=True)
+
+    st.markdown("AI 애널리스트와 대화하고, 투자 분석 레포트를 생성하세요")
+
     st.markdown("---")
-    
-    # Analysis type selector
-    analysis_type = st.selectbox(
-        "Select Analysis Type",
-        [
-            "📊 Company Deep Dive",
-            "⚖️ Comparative Analysis",
-            "📈 Sector Overview",
-            "🎯 Portfolio Optimization",
-            "⚠️ Risk Assessment"
-        ]
-    )
-    
-    st.markdown("---")
-    
-    if "Company Deep Dive" in analysis_type:
-        render_company_deep_dive()
-    elif "Comparative Analysis" in analysis_type:
-        render_comparative_analysis()
-    elif "Sector Overview" in analysis_type:
-        render_sector_overview()
-    elif "Portfolio Optimization" in analysis_type:
-        render_portfolio_optimization()
-    else:
-        render_risk_assessment()
+
+    if not RAG_AVAILABLE:
+        st.error(f"RAG 모듈 로드 실패: {IMPORT_ERROR}")
+        st.info("pip install openai supabase 를 실행하세요")
+        return
+
+    # Tabs for different features
+    tab1, tab2, tab3 = st.tabs(["💬 AI 챗봇", "📊 레포트 생성", "⚖️ 비교 분석"])
+
+    with tab1:
+        render_chatbot()
+
+    with tab2:
+        render_report_generator()
+
+    with tab3:
+        render_comparison()
 
 
-def render_company_deep_dive():
-    """Render company deep dive analysis"""
-    
-    col1, col2 = st.columns([2, 1])
-    
+def render_chatbot():
+    """Render AI Analyst Chatbot"""
+
+    st.markdown("### 🤖 AI 금융 애널리스트")
+    st.caption("gpt-4.1-mini 기반 | 애널리스트/기자 스타일 응답")
+
+    # Company selector
+    col1, col2 = st.columns([3, 1])
+
     with col1:
-        company = st.selectbox(
-            "Select Company",
-            ["AAPL - Apple Inc.", "MSFT - Microsoft Corp.", "GOOGL - Alphabet Inc."]
+        ticker = st.text_input(
+            "분석할 회사 티커 (선택사항)",
+            placeholder="AAPL, MSFT, GOOGL...",
+            help="특정 회사에 대해 질문하려면 티커를 입력하세요",
         )
-        
-        if st.button("🔍 Generate Analysis", type="primary", use_container_width=True):
-            with st.spinner("Analyzing company data..."):
-                st.markdown("### 📊 Apple Inc. - Comprehensive Analysis")
-                
-                st.success("""
-                **Investment Rating: BUY ⭐⭐⭐⭐**
-                
-                **Executive Summary:**
-                Apple Inc. demonstrates strong financial health with consistent revenue growth, 
-                excellent profit margins, and a robust ecosystem business model.
-                """)
-                
-                # Financial Health
-                st.markdown("#### 💰 Financial Health")
-                
-                col_a, col_b, col_c = st.columns(3)
-                
-                with col_a:
-                    st.metric("Revenue Growth", "+5.3%", "YoY")
-                    st.metric("Profit Margin", "26.3%", "+0.4%")
-                
-                with col_b:
-                    st.metric("ROE", "172.3%", "+8.1%")
-                    st.metric("Current Ratio", "0.98", "Stable")
-                
-                with col_c:
-                    st.metric("Debt/Equity", "1.97", "-0.12")
-                    st.metric("FCF Yield", "3.8%", "+0.3%")
-                
-                # Strengths
-                st.markdown("#### ✅ Key Strengths")
-                st.markdown("""
-                1. **Strong Brand Equity**: Apple maintains premium pricing power and customer loyalty
-                2. **Services Growth**: Services segment growing at 15%+ annually with high margins
-                3. **Cash Position**: $162B in cash and marketable securities
-                4. **Innovation Pipeline**: Continued investment in AR/VR and AI technologies
-                5. **Ecosystem Lock-in**: Hardware + software + services create high switching costs
-                """)
-                
-                # Risks
-                st.markdown("#### ⚠️ Key Risks")
-                st.markdown("""
-                1. **China Exposure**: 18% of revenue from Greater China region
-                2. **Regulatory Pressure**: App Store policies under scrutiny globally
-                3. **Market Saturation**: Smartphone market showing signs of maturation
-                4. **Supply Chain**: Dependence on key suppliers (e.g., TSMC)
-                """)
-    
+
     with col2:
-        st.markdown("### 📈 Key Metrics")
-        
-        metrics_data = pd.DataFrame({
-            "Metric": ["P/E Ratio", "P/B Ratio", "Div Yield", "Beta"],
-            "Value": ["28.5", "45.2", "0.52%", "1.23"],
-            "Sector Avg": ["25.3", "8.4", "1.2%", "1.15"]
-        })
-        
-        st.dataframe(metrics_data, use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
-        
-        st.markdown("### 🎯 Price Targets")
-        
-        st.metric("Current Price", "$185.50")
-        st.metric("Analyst Average", "$205.00", "+10.5%")
-        st.metric("AI Prediction", "$198.00", "+6.7%")
+        use_rag = st.checkbox("RAG 사용", value=True, help="관련 문서 검색 활성화")
+
+    # 추천 질문
+    st.markdown("#### 💡 추천 질문")
+    suggested_questions = [
+        "현재 주가와 목표주가 차이는 얼마인가요?",
+        "최근 실적 발표 내용을 요약해주세요",
+        "애널리스트들의 투자 의견은 어떤가요?",
+        "주요 경쟁사와 비교했을 때 장단점은?",
+        "투자 리스크 요인은 무엇인가요?",
+        "배당 정책과 배당수익률은 어떤가요?",
+    ]
+
+    # 추천 질문 버튼들
+    cols = st.columns(2)
+    for i, question in enumerate(suggested_questions):
+        with cols[i % 2]:
+            if st.button(f"💬 {question}", key=f"suggest_{i}", use_container_width=True):
+                st.session_state.suggested_question = question
+                st.rerun()
+
+    st.markdown("---")
+
+    # Initialize session state for chat
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+
+    if "chatbot" not in st.session_state:
+        try:
+            st.session_state.chatbot = AnalystChatbot()
+        except Exception as e:
+            st.error(f"챗봇 초기화 실패: {e}")
+            return
+
+    # 추천 질문이 선택되었는지 확인
+    suggested = st.session_state.pop("suggested_question", None)
+
+    # Display chat history in a scrollable container
+    chat_container = st.container(height=600)
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    # Chat input processing
+    prompt = st.chat_input("금융 관련 질문을 입력하세요...")
+
+    # 추천 질문 버튼을 눌렀거나, 사용자가 입력을 했을 경우
+    if suggested:
+        prompt = suggested
+
+    if prompt:
+        # Add user message
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+
+        # Generate response
+        try:
+            with st.spinner("분석 중..."):
+                response = st.session_state.chatbot.chat(
+                    prompt, ticker=ticker.upper() if ticker else None, use_rag=use_rag
+                )
+
+            # Add assistant message
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+
+            # Rerun to update chat history in container
+            st.rerun()
+
+        except Exception as e:
+            st.error(f"응답 생성 실패: {e}")
+
+    # Clear chat button
+    if st.button("🗑️ 대화 초기화"):
+        st.session_state.chat_history = []
+        st.session_state.chatbot.clear_history()
+        st.rerun()
 
 
-def render_comparative_analysis():
-    """Render comparative analysis"""
-    
-    st.markdown("### ⚖️ Multi-Company Comparison")
-    
-    companies = st.multiselect(
-        "Select companies to compare",
-        ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "NVDA"],
-        default=["AAPL", "MSFT", "GOOGL"]
+def render_report_generator():
+    """Render Report Generator"""
+
+    st.markdown("### 📊 투자 분석 레포트")
+    st.caption("gpt-5-nano 기반 | 구조화된 투자 리서치 보고서")
+
+    col1, col2 = st.columns([3, 1])
+
+    with col1:
+        ticker = st.text_input("회사 티커", placeholder="AAPL", key="report_ticker")
+
+    with col2:
+        generate_btn = st.button("📝 레포트 생성", type="primary", use_container_width=True)
+
+    if generate_btn and ticker:
+        try:
+            generator = ReportGenerator()
+
+            with st.spinner(f"📊 {ticker.upper()} 분석 레포트 생성 중..."):
+                report = generator.generate_report(ticker.upper())
+
+            st.markdown("---")
+            st.markdown(report)
+
+            # Download button
+            st.download_button(
+                label="📥 레포트 다운로드 (MD)",
+                data=report,
+                file_name=f"{ticker.upper()}_analysis_report.md",
+                mime="text/markdown",
+            )
+
+        except Exception as e:
+            st.error(f"레포트 생성 실패: {e}")
+
+    elif generate_btn:
+        st.warning("티커를 입력해주세요")
+
+
+def render_comparison():
+    """Render Comparison Analysis"""
+
+    st.markdown("### ⚖️ 기업 비교 분석")
+
+    tickers_input = st.text_input(
+        "비교할 회사 티커들 (쉼표로 구분)", placeholder="AAPL, MSFT, GOOGL"
     )
-    
-    if st.button("📊 Compare Companies", type="primary"):
-        comparison_data = pd.DataFrame({
-            "Company": ["Apple", "Microsoft", "Alphabet"],
-            "Market Cap ($B)": [2850, 2780, 1720],
-            "Revenue ($B)": [383.3, 211.9, 307.4],
-            "Net Income ($B)": [101.0, 71.6, 86.4],
-            "Profit Margin": ["26.3%", "33.8%", "28.1%"],
-            "ROE": ["172%", "48%", "32%"],
-            "P/E Ratio": [28.5, 35.2, 24.8]
-        })
-        
-        st.dataframe(comparison_data, use_container_width=True, hide_index=True)
-        
-        st.markdown("### 🤖 AI Recommendation")
-        st.info("""
-        **Comparative Investment Analysis:**
-        
-        - **Microsoft**: Best profit margin (33.8%) indicates superior operational efficiency
-        - **Apple**: Exceptional ROE (172%) driven by massive share buybacks
-        - **Alphabet**: Most attractive P/E ratio (24.8) suggesting potential undervaluation
-        
-        **Recommended Portfolio Allocation:**
-        - Microsoft: 40% (quality + stability)
-        - Alphabet: 35% (growth + value)
-        - Apple: 25% (brand + ecosystem)
-        """)
 
+    if st.button("📊 비교 분석", type="primary"):
+        if tickers_input:
+            tickers = [t.strip().upper() for t in tickers_input.split(",")]
 
-def render_sector_overview():
-    """Render sector overview"""
-    
-    st.markdown("### 📈 Technology Sector Overview")
-    
-    sector_metrics = pd.DataFrame({
-        "Metric": ["Avg Market Cap", "Avg P/E", "Avg Profit Margin", "YoY Growth"],
-        "Technology": ["$450B", "28.3", "18.5%", "+12.4%"],
-        "S&P 500": ["$85B", "20.5", "11.2%", "+8.1%"]
-    })
-    
-    st.dataframe(sector_metrics, use_container_width=True, hide_index=True)
-    
-    st.markdown("### 🏆 Top Performers")
-    
-    performers = pd.DataFrame({
-        "Rank": ["1st", "2nd", "3rd"],
-        "Company": ["NVDA", "MSFT", "AAPL"],
-        "YTD Return": ["+245%", "+58%", "+47%"],
-        "Reason": ["AI Boom", "Cloud Growth", "Services Expansion"]
-    })
-    
-    st.dataframe(performers, use_container_width=True, hide_index=True)
+            if len(tickers) < 2:
+                st.warning("2개 이상의 회사를 입력해주세요")
+                return
 
+            try:
+                generator = ReportGenerator()
 
-def render_portfolio_optimization():
-    """Render portfolio optimization"""
-    
-    st.markdown("### 🎯 Portfolio Optimization")
-    
-    st.slider("Risk Tolerance", 1, 10, 5)
-    st.slider("Investment Horizon (years)", 1, 30, 10)
-    
-    budget = st.number_input("Investment Amount ($)", 1000, 1000000, 10000)
-    
-    if st.button("🎯 Optimize Portfolio", type="primary"):
-        st.success("Optimized portfolio generated based on Modern Portfolio Theory")
-        
-        allocation = pd.DataFrame({
-            "Company": ["AAPL", "MSFT", "GOOGL", "NVDA", "CASH"],
-            "Allocation %": [25, 30, 20, 15, 10],
-            "Amount $": [2500, 3000, 2000, 1500, 1000],
-            "Expected Return": ["12%", "15%", "18%", "25%", "2%"]
-        })
-        
-        st.dataframe(allocation, use_container_width=True, hide_index=True)
+                with st.spinner(f"⚖️ {', '.join(tickers)} 비교 분석 중..."):
+                    report = generator.generate_comparison_report(tickers)
 
+                st.markdown("---")
+                st.markdown(report)
 
-def render_risk_assessment():
-    """Render risk assessment"""
-    
-    st.markdown("### ⚠️ Portfolio Risk Assessment")
-    
-    st.warning("""
-    **Overall Risk Level: MODERATE**
-    
-    Your portfolio shows moderate risk exposure with diversified holdings.
-    """)
-    
-    risk_factors = pd.DataFrame({
-        "Risk Factor": [
-            "Market Risk",
-            "Sector Concentration",
-            "Geographic Risk",
-            "Currency Risk",
-            "Liquidity Risk"
-        ],
-        "Level": ["Medium", "High", "Medium", "Low", "Low"],
-        "Impact": ["Moderate", "Significant", "Moderate", "Minor", "Minor"]
-    })
-    
-    st.dataframe(risk_factors, use_container_width=True, hide_index=True)
+                # Download button for comparison report
+                st.download_button(
+                    label="📥 비교 레포트 다운로드 (MD)",
+                    data=report,
+                    file_name=f"comparison_{'_'.join(tickers)}.md",
+                    mime="text/markdown",
+                )
+
+            except Exception as e:
+                st.error(f"비교 분석 실패: {e}")
+        else:
+            st.warning("비교할 회사 티커를 입력해주세요")
