@@ -44,12 +44,35 @@ class AnalystChatbot(RAGBase):
                 except Exception as e:
                     logger.warning(f"Exchange client init failed: {e}")
 
-        # Load system prompt
-        self.system_prompt = self._load_prompt("analyst_chat.txt")
+        # Load system prompt with security defense layer
+        self.system_prompt = self._load_system_prompt_with_defense()
 
         # Conversation history
         self.conversation_history: List[Dict] = []
         logger.info("AnalystChatbot initialized (inherited from RAGBase)")
+
+    def _load_system_prompt_with_defense(self) -> str:
+        """
+        시스템 방어 레이어와 메인 프롬프트를 결합하여 로드합니다.
+        방어 레이어가 먼저 오고, 그 다음 메인 프롬프트가 옵니다.
+        """
+        parts = []
+        
+        # 1. 시스템 방어 레이어 로드 (최우선)
+        defense_prompt = self._load_prompt("system_defense.txt")
+        if defense_prompt:
+            parts.append(defense_prompt)
+            logger.info("System defense layer loaded")
+        
+        # 2. 메인 분석가 프롬프트 로드
+        main_prompt = self._load_prompt("analyst_chat.txt")
+        if main_prompt:
+            parts.append("\n\n# === ANALYST INSTRUCTIONS ===\n")
+            parts.append(main_prompt)
+        
+        combined = "\n".join(parts)
+        logger.debug(f"Combined system prompt: {len(combined)} chars")
+        return combined
 
     # _get_embedding Removed - Handled by VectorStore internally
     def _search_documents(self, query: str, limit: int = 5) -> List[Dict]:

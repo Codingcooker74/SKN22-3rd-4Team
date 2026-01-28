@@ -29,17 +29,32 @@ def create_pdf(markdown_text: str) -> bytes:
 
     # Try to find Korean fonts (regular and bold)
     font_paths = [
+        # 1. 프로젝트 내 폰트 (우선)
         fonts_dir / "NanumGothic.ttf",
         fonts_dir / "MALGUN.TTF",
         fonts_dir / "malgun.ttf",
+        # 2. macOS - 사용자 폰트 (Homebrew 설치 위치)
+        Path.home() / "Library" / "Fonts" / "NanumGothic.ttf",
+        Path.home() / "Library" / "Fonts" / "NanumBarunGothic.ttf",
+        # 3. macOS - 시스템 폰트
+        Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
+        Path("/Library/Fonts/AppleGothic.ttf"),
+        # 4. Windows
         Path("C:/Windows/Fonts/malgun.ttf"),
         Path("C:/Windows/Fonts/MALGUN.TTF"),
     ]
 
     bold_font_paths = [
+        # 1. 프로젝트 내 폰트
         fonts_dir / "NanumGothicBold.ttf",
         fonts_dir / "MALGUNBD.TTF",
         fonts_dir / "malgunbd.ttf",
+        # 2. macOS - 사용자 폰트
+        Path.home() / "Library" / "Fonts" / "NanumGothicBold.ttf",
+        Path.home() / "Library" / "Fonts" / "NanumBarunGothicBold.ttf",
+        # 3. macOS - 시스템 폰트 (Bold 없으면 Regular 사용)
+        Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),
+        # 4. Windows
         Path("C:/Windows/Fonts/malgunbd.ttf"),
         Path("C:/Windows/Fonts/MALGUNBD.TTF"),
     ]
