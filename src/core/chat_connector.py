@@ -46,6 +46,7 @@ class ChatResponse:
     report_type: Optional[str] = None
     tickers: List[str] = field(default_factory=list)
     chart_data: Optional[Dict] = None
+    recommendations: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
     error_code: Optional[str] = None
 
@@ -269,6 +270,7 @@ class ChatConnector:
                 report_type=result.get("report_type"),
                 tickers=result.get("tickers", []),
                 chart_data=result.get("chart_data"),
+                recommendations=result.get("recommendations", []),
                 metadata={
                     "processing_time_ms": int(processing_time * 1000),
                     "remaining_requests": remaining,

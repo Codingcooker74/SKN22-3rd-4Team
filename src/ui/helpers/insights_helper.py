@@ -73,7 +73,12 @@ def get_suggested_questions() -> list[str]:
     if not st.session_state.get("chat_history"):
         return []
     
-    # 마지막 대화 분석
+    # 1. AI가 생성한 추천 검색어가 있으면 우선 사용
+    last_msg = st.session_state["chat_history"][-1]
+    if last_msg["role"] == "assistant" and last_msg.get("recommendations"):
+        return last_msg["recommendations"][:4]
+
+    # 2. 없으면 기존 로직(대화 분석) 사용
     last_user_msg, last_ai_msg = get_last_messages()
     context = f"{last_user_msg} {last_ai_msg}"
     

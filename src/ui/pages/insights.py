@@ -238,6 +238,7 @@ def render_chatbot_secure():
                         "report": response.report,
                         "report_type": response.report_type,
                         "chart_data": response.chart_data,
+                        "recommendations": response.recommendations,
                     }
                 )
             else:

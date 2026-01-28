@@ -531,12 +531,14 @@ class AnalystChatbot(RAGBase):
             messages.append({"role": "user", "content": user_content})
 
             # 3. LLM 호출 (1차: 도구 사용 여부 결정)
+            # 3. LLM 호출 (1차: 도구 사용 여부 결정)
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
                 max_completion_tokens=2000,
+                response_format={"type": "json_object"}  # JSON 모드 강제
             )
 
             resp_msg = response.choices[0].message
@@ -544,6 +546,8 @@ class AnalystChatbot(RAGBase):
 
             # 4. 도구 호출 처리
             chart_data = None
+            recommendations = []
+            
             if tool_calls:
                 messages.append(resp_msg)
                 for tool_call in tool_calls:
@@ -575,11 +579,24 @@ class AnalystChatbot(RAGBase):
 
                 # 2차 LLM 호출 (최종 답변)
                 final_response = self.openai_client.chat.completions.create(
-                    model=self.model, messages=messages, max_completion_tokens=2000
+                    model=self.model,
+                    messages=messages,
+                    max_completion_tokens=2000,
+                    response_format={"type": "json_object"}
                 )
-                assistant_message = final_response.choices[0].message.content
+                raw_content = final_response.choices[0].message.content
             else:
-                assistant_message = resp_msg.content
+                raw_content = resp_msg.content
+
+            # JSON 파싱 및 최종 메시지 추출
+            try:
+                parsed_content = json.loads(raw_content)
+                assistant_message = parsed_content.get("answer", raw_content)
+                recommendations = parsed_content.get("recommendations", [])
+            except json.JSONDecodeError:
+                # Fallback if JSON fails (should be rare with response_format)
+                assistant_message = raw_content
+                recommendations = []
 
             # 5. 레포트 생성 의도 파악 및 처리
             report_data, report_type = self._process_report_request(
@@ -588,7 +605,7 @@ class AnalystChatbot(RAGBase):
             if report_data:
                 assistant_message += f"\n\n(요청하신 분석 보고서를 {report_type.upper()}로 생성했습니다. 하단 버튼으로 다운로드하세요.)"
 
-            # 6. 히스토리 업데이트
+            # 6. 히스토리 업데이트 (답변 내용만 저장)
             self.conversation_history.append({"role": "user", "content": message})
             self.conversation_history.append(
                 {"role": "assistant", "content": assistant_message}
@@ -600,6 +617,7 @@ class AnalystChatbot(RAGBase):
                 "report_type": report_type,
                 "tickers": tickers,
                 "chart_data": chart_data,
+                "recommendations": recommendations,  # 추천 질문 포함
             }
 
         except Exception as e:
