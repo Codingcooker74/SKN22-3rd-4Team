@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     RAW_DATA_DIR: Path = DATA_DIR / "raw"
     PROCESSED_DATA_DIR: Path = DATA_DIR / "processed"
     VECTOR_STORE_DIR: Path = DATA_DIR / "vector_store"
+    TEN_K_DOCS_DIR: Path = DATA_DIR / "10k_documents"
     MODELS_DIR: Path = BASE_DIR / "models"
 
     # API Keys
@@ -28,24 +29,23 @@ class Settings(BaseSettings):
     SUPABASE_URL: Optional[str] = Field(None, env="SUPABASE_URL")
     SUPABASE_KEY: Optional[str] = Field(None, env="SUPABASE_KEY")
 
-    # Vector Database
-    CHROMADB_HOST: str = Field("localhost", env="CHROMADB_HOST")
-    CHROMADB_PORT: int = Field(8000, env="CHROMADB_PORT")
+    # SEC EDGAR API
+    SEC_API_USER_AGENT: str = Field(
+        "researcher@university.edu", env="SEC_API_USER_AGENT"
+    )
 
     # Finnhub
     FINNHUB_API_KEY: Optional[str] = Field(None, env="FINNHUB_API_KEY")
-
-    # Database
-    DATABASE_URL: str = Field("sqlite:///./data/financial_data.db", env="DATABASE_URL")
 
     # Application Settings
     DEBUG: bool = Field(False, env="DEBUG")
     LOG_LEVEL: str = Field("INFO", env="LOG_LEVEL")
     MAX_WORKERS: int = Field(4, env="MAX_WORKERS")
 
-    # Model Settings
+    # Model Settings (matches .env)
     EMBEDDING_MODEL: str = Field("text-embedding-3-small", env="EMBEDDING_MODEL")
-    LLM_MODEL: str = Field("gpt-4-turbo-preview", env="LLM_MODEL")
+    CHAT_MODEL: str = Field("gpt-4.1-mini", env="CHAT_MODEL")
+    REPORT_MODEL: str = Field("gpt-5-nano", env="REPORT_MODEL")
     TEMPERATURE: float = Field(0.1, env="TEMPERATURE")
     MAX_TOKENS: int = Field(4096, env="MAX_TOKENS")
 
@@ -55,7 +55,15 @@ class Settings(BaseSettings):
     TOP_K_RESULTS: int = 5
     SIMILARITY_THRESHOLD: float = 0.7
 
-    # Graph Settings
+    # Relationship Settings (for SEC 10-K analysis)
+    RELATIONSHIP_TYPES: list = [
+        "supplier",
+        "customer",
+        "competitor",
+        "subsidiary",
+        "partner",
+        "mentioned",
+    ]
     MAX_GRAPH_DEPTH: int = 3
     MIN_RELATIONSHIP_STRENGTH: float = 0.5
 
@@ -75,4 +83,5 @@ settings = Settings()
 settings.RAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
 settings.PROCESSED_DATA_DIR.mkdir(parents=True, exist_ok=True)
 settings.VECTOR_STORE_DIR.mkdir(parents=True, exist_ok=True)
+settings.TEN_K_DOCS_DIR.mkdir(parents=True, exist_ok=True)
 settings.MODELS_DIR.mkdir(parents=True, exist_ok=True)

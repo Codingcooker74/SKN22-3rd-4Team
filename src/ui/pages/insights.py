@@ -3,7 +3,9 @@ Investment insights page with AI Analyst Chatbot and Report Generator
 """
 
 import streamlit as st
+import pandas as pd
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Add src to path
@@ -93,6 +95,22 @@ def render_chatbot():
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
+                    # Check for chart data
+                    if msg.get("chart_data"):
+                        chart_data = msg["chart_data"]
+                        if "c" in chart_data and "t" in chart_data:
+                            ticker = chart_data.get("ticker", "Stock")
+                            closes = chart_data["c"]
+                            timestamps = chart_data["t"]
+                            dates = [datetime.fromtimestamp(t) for t in timestamps]
+
+                            df = pd.DataFrame({"Date": dates, "Price": closes})
+                            df.set_index("Date", inplace=True)
+
+                            st.subheader(f"📈 {ticker} 주가 추이")
+                            st.line_chart(df)
+                            st.caption(f"최근 {len(closes)}일/구간 데이터 ({ticker})")
+
                     # Check for downloadable report
                     if msg.get("report"):
                         # Check if backend already specified the type
@@ -163,6 +181,9 @@ def render_chatbot():
                     "content": content,
                     "report": report,
                     "report_type": report_type,
+                    "chart_data": (
+                        result.get("chart_data") if isinstance(result, dict) else None
+                    ),
                 }
             )
 

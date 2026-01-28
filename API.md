@@ -71,6 +71,20 @@ report = gen.generate_report("NVDA")
 
 Analyzes corporate relationships.
 
+### Data Retriever (Optimization Layer)
+
+`src.rag.data_retriever.DataRetriever`
+
+Orchestrates all data source fetches in parallel.
+
+```python
+from src.rag.data_retriever import DataRetriever
+
+retriever = DataRetriever(supabase, vector_store, graph_rag, finnhub)
+# Fetches everything in parallel
+all_data = retriever.get_company_context_parallel("AAPL") 
+```
+
 ---
 
 ## SQL Layer

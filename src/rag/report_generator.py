@@ -8,161 +8,68 @@ import logging
 from pathlib import Path
 from typing import Dict, Optional
 from datetime import datetime
-from openai import OpenAI
-from supabase import create_client, Client
-from dotenv import load_dotenv
-
-# Import Finnhub client
-try:
-    from data.finnhub_client import get_finnhub_client
-
-    FINNHUB_AVAILABLE = True
-except ImportError:
-    FINNHUB_AVAILABLE = False
-
-load_dotenv()
-
-logger = logging.getLogger(__name__)
+from rag.rag_base import RAGBase, logger
 
 # Prompts directory
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-class ReportGenerator:
+class ReportGenerator(RAGBase):
     """
     투자 분석 레포트 생성기
-    gpt-5-nano 사용
+    gpt-4.1-mini 사용
     """
 
     def __init__(self):
-        """Initialize report generator"""
-
-        # OpenAI client
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY 환경 변수가 필요합니다.")
-
-        self.openai_client = OpenAI(api_key=self.openai_api_key)
-        self.model = "gpt-4.1-mini"  # 레포트용 모델
-        self.embedding_model = "text-embedding-3-small"
-
-        # Supabase client
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL과 SUPABASE_KEY 환경 변수가 필요합니다.")
-
-        self.supabase: Client = create_client(supabase_url, supabase_key)
-
-        # Finnhub client for real-time data
-        self.finnhub = None
-        if FINNHUB_AVAILABLE:
-            try:
-                self.finnhub = get_finnhub_client()
-                if not self.finnhub.api_key:
-                    self.finnhub = None
-            except Exception as e:
-                logger.warning(f"Finnhub init failed: {e}")
+        """Initialize report generator inheriting from RAGBase"""
+        super().__init__(model_name="gpt-4.1-mini")
 
         # Load system prompt
         self.system_prompt = self._load_prompt("report_generator.txt")
 
-        logger.info("ReportGenerator initialized")
-
-    def _load_prompt(self, filename: str) -> str:
-        """Load system prompt from file"""
-        prompt_path = PROMPTS_DIR / filename
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            logger.warning(f"Prompt file not found: {prompt_path}")
-            return "당신은 투자 리서치 보고서를 작성하는 전문 애널리스트입니다."
+        logger.info("ReportGenerator initialized (inherited from RAGBase)")
 
     def _get_company_data(self, ticker: str) -> Dict:
-        """Get all available company data"""
-        data = {
-            "company": None,
-            "annual_reports": [],
-            "quarterly_reports": [],
-            "relationships": [],
-            "stock_prices": [],
+        """기업 데이터를 병렬로 수집 (DataRetriever 활용)"""
+        if not self.data_retriever:
+            # Fallback (최소한의 데이터만 수집)
+            return {
+                "company": None,
+                "annual_reports": [],
+                "quarterly_reports": [],
+                "relationships": [],
+                "stock_prices": [],
+                "rag_context": "",
+            }
+
+        raw_data = self.data_retriever.get_company_context_parallel(
+            ticker, include_finnhub=False, include_rag=True
+        )
+
+        # 레포트 포맷에 맞게 데이터 재구성
+        return {
+            "company": raw_data.get("company"),
+            "annual_reports": raw_data.get("financials", {}).get("annual", []),
+            "quarterly_reports": raw_data.get("financials", {}).get("quarterly", []),
+            "relationships": raw_data.get("relationships", []),
+            "stock_prices": raw_data.get("financials", {}).get("prices", []),
+            "rag_context": raw_data.get("rag_context", ""),
         }
 
-        try:
-            # Company info
-            result = (
-                self.supabase.table("companies")
-                .select("*")
-                .eq("ticker", ticker.upper())
-                .execute()
-            )
-            if result.data:
-                data["company"] = result.data[0]
-                company_id = result.data[0].get("id")
-
-                # Annual reports
-                annual = (
-                    self.supabase.table("annual_reports")
-                    .select("*")
-                    .eq("company_id", company_id)
-                    .order("fiscal_year", desc=True)
-                    .limit(3)
-                    .execute()
-                )
-                data["annual_reports"] = annual.data or []
-
-                # Quarterly reports
-                quarterly = (
-                    self.supabase.table("quarterly_reports")
-                    .select("*")
-                    .eq("company_id", company_id)
-                    .order("fiscal_year", desc=True)
-                    .order("fiscal_quarter", desc=True)
-                    .limit(4)
-                    .execute()
-                )
-                data["quarterly_reports"] = quarterly.data or []
-
-                # Stock prices
-                prices = (
-                    self.supabase.table("stock_prices")
-                    .select("*")
-                    .eq("company_id", company_id)
-                    .order("price_date", desc=True)
-                    .limit(5)
-                    .execute()
-                )
-                data["stock_prices"] = prices.data or []
-
-            # Relationships
-            outgoing = (
-                self.supabase.table("company_relationships")
-                .select("*")
-                .eq("source_ticker", ticker.upper())
-                .execute()
-            )
-            incoming = (
-                self.supabase.table("company_relationships")
-                .select("*")
-                .eq("target_ticker", ticker.upper())
-                .execute()
-            )
-            data["relationships"] = (outgoing.data or []) + (incoming.data or [])
-
-        except Exception as e:
-            logger.error(f"Error fetching company data: {e}")
-
-        return data
-
     def _format_data_context(self, data: Dict) -> str:
-        """Format company data into context string"""
+        """Format company data into context string with source labels"""
+        from datetime import datetime
+        import pytz
+
         parts = []
+        kst = pytz.timezone("Asia/Seoul")
+        now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M KST")
 
         company = data.get("company")
         if company:
-            parts.append(f"## 기업 개요")
+            parts.append(
+                f"## 기업 개요 [Source: Supabase DB | 최종 업데이트: DB 동기화 기준]"
+            )
             parts.append(f"- 회사명: {company.get('company_name', 'N/A')}")
             parts.append(f"- 티커: {company.get('ticker', 'N/A')}")
             parts.append(f"- 섹터: {company.get('sector', 'N/A')}")
@@ -172,7 +79,9 @@ class ReportGenerator:
 
         annual = data.get("annual_reports", [])
         if annual:
-            parts.append(f"\n## 연간 재무 데이터")
+            parts.append(
+                f"\n## 연간 재무 데이터 [Source: Supabase DB | 10-K 공시 기준]"
+            )
             for report in annual[:3]:
                 year = report.get("fiscal_year", "N/A")
                 parts.append(f"\n### {year}년")
@@ -185,7 +94,7 @@ class ReportGenerator:
 
         quarterly = data.get("quarterly_reports", [])
         if quarterly:
-            parts.append(f"\n## 최근 분기 실적")
+            parts.append(f"\n## 최근 분기 실적 [Source: Supabase DB | 10-Q 공시 기준]")
             for report in quarterly[:2]:
                 year = report.get("fiscal_year", "N/A")
                 quarter = report.get("fiscal_quarter", "N/A")
@@ -196,7 +105,9 @@ class ReportGenerator:
 
         relationships = data.get("relationships", [])
         if relationships:
-            parts.append(f"\n## 기업 관계")
+            parts.append(
+                f"\n## 기업 관계 [Source: GraphRAG (Supabase) | 관계망 분석 기준]"
+            )
             for rel in relationships[:5]:
                 parts.append(
                     f"- {rel.get('source_company')} → [{rel.get('relationship_type')}] → {rel.get('target_company')}"
@@ -205,123 +116,140 @@ class ReportGenerator:
         prices = data.get("stock_prices", [])
         if prices and prices[0]:
             latest = prices[0]
-            parts.append(f"\n## 최근 주가")
+            parts.append(f"\n## 최근 주가 [Source: Supabase DB | 마지막 동기화 기준]")
             parts.append(f"- 날짜: {latest.get('price_date', 'N/A')}")
             parts.append(f"- 종가: {latest.get('close_price', 'N/A')}")
             parts.append(f"- P/E: {latest.get('pe_ratio', 'N/A')}")
             parts.append(f"- P/B: {latest.get('pb_ratio', 'N/A')}")
 
+        rag_context = data.get("rag_context", "")
+        if rag_context:
+            parts.append(
+                f"\n## 10-K 보고서 심층 내용 [Source: VectorDB (10-K RAG) | SEC 공시 기준]"
+            )
+            parts.append(rag_context)
+
         return "\n".join(parts) if parts else "데이터 없음"
 
-    def _get_finnhub_data(self, ticker: str) -> str:
-        """Get real-time data from Finnhub"""
+    def _get_finnhub_data(self, ticker: str, raw_finnhub: Optional[Dict] = None) -> str:
+        """Get real-time data from Finnhub (Refactored to use pre-fetched data)"""
         if not self.finnhub:
             return ""
 
-        parts = []
-
-        try:
-            # Company profile
-            profile = self.finnhub.get_company_profile(ticker.upper())
-            if profile and "name" in profile:
-                parts.append("## 기업 개요 (Finnhub 실시간)")
-                parts.append(f"- 회사명: {profile.get('name', 'N/A')}")
-                parts.append(f"- 티커: {profile.get('ticker', ticker.upper())}")
-                parts.append(f"- 산업: {profile.get('finnhubIndustry', 'N/A')}")
-                parts.append(
-                    f"- 시가총액: ${profile.get('marketCapitalization', 0):,.0f}M"
+        # 만약 raw_finnhub가 없으면 직접 수집 (하위 호환성)
+        if not raw_finnhub:
+            if self.data_retriever:
+                raw_data = self.data_retriever.get_company_context_parallel(
+                    ticker, include_finnhub=True, include_rag=False
                 )
-                parts.append(f"- 거래소: {profile.get('exchange', 'N/A')}")
-                parts.append(f"- 웹사이트: {profile.get('weburl', 'N/A')}")
+                raw_finnhub = raw_data.get("finnhub", {})
+            else:
+                return ""
 
-            # Real-time quote
-            quote = self.finnhub.get_quote(ticker.upper())
+        parts = []
+        try:
+            # 타임스탬프 추가
+            import pytz
+
+            kst = pytz.timezone("Asia/Seoul")
+            now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M KST")
+
+            # 1. Quote
+            quote = raw_finnhub.get("quote", {})
             if quote and "c" in quote:
                 current = quote.get("c", 0)
                 prev_close = quote.get("pc", 0)
                 change = current - prev_close
                 change_pct = (change / prev_close * 100) if prev_close else 0
-
-                parts.append("\n## 실시간 시세")
+                parts.append(
+                    f"## 실시간 시세 [Source: Finnhub API | 조회시간: {now_kst}]"
+                )
                 parts.append(f"- 현재가: ${current:.2f}")
                 parts.append(
                     f"- 변동: {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.2f}%)"
                 )
-                parts.append(f"- 고가: ${quote.get('h', 0):.2f}")
-                parts.append(f"- 저가: ${quote.get('l', 0):.2f}")
-                parts.append(f"- 전일종가: ${prev_close:.2f}")
-
-            # Basic financials
-            financials = self.finnhub.get_basic_financials(ticker.upper())
-            if financials and "metric" in financials:
-                metrics = financials["metric"]
-                parts.append("\n## 재무 지표")
                 parts.append(
-                    f"- P/E (TTM): {metrics.get('peBasicExclExtraTTM', 'N/A')}"
+                    f"- 고가/저가: ${quote.get('h', 0):.2f} / ${quote.get('l', 0):.2f}"
                 )
-                parts.append(f"- P/B: {metrics.get('pbAnnual', 'N/A')}")
-                parts.append(f"- ROE: {metrics.get('roeRfy', 'N/A')}")
-                parts.append(
-                    f"- 배당수익률: {metrics.get('dividendYieldIndicatedAnnual', 'N/A')}%"
-                )
-                parts.append(f"- 52주 최고: ${metrics.get('52WeekHigh', 'N/A')}")
-                parts.append(f"- 52주 최저: ${metrics.get('52WeekLow', 'N/A')}")
 
-            # Analyst recommendations
-            recs = self.finnhub.get_recommendation_trends(ticker.upper())
-            if recs and len(recs) > 0:
+            metrics_data = raw_finnhub.get("metrics", {})
+            if metrics_data and "metric" in metrics_data:
+                m = metrics_data["metric"]
+                parts.append(f"\n## 주요 재무 지표 [Source: Finnhub API | TTM 기준]")
+                parts.append(f"- P/E (TTM): {m.get('peBasicExclExtraTTM', 'N/A')}")
+                parts.append(f"- P/B: {m.get('pbAnnual', 'N/A')}")
+                parts.append(f"- ROE: {m.get('roeRfy', 'N/A')}%")
+                parts.append(
+                    f"- 배당수익률: {m.get('dividendYieldIndicatedAnnual', 'N/A')}%"
+                )
+
+            recs = raw_finnhub.get("recommendations", [])
+            if recs:
                 latest = recs[0]
-                parts.append("\n## 애널리스트 추천")
-                parts.append(f"- Strong Buy: {latest.get('strongBuy', 0)}")
-                parts.append(f"- Buy: {latest.get('buy', 0)}")
-                parts.append(f"- Hold: {latest.get('hold', 0)}")
-                parts.append(f"- Sell: {latest.get('sell', 0)}")
-                parts.append(f"- Strong Sell: {latest.get('strongSell', 0)}")
+                parts.append(
+                    f"\n## 애널리스트 의견 [Source: Finnhub API | 최신 컨센서스]"
+                )
+                parts.append(
+                    f"- 추천: Buy({latest.get('buy', 0)}), Hold({latest.get('hold', 0)}), Sell({latest.get('sell', 0)})"
+                )
 
-            # Price target
-            target = self.finnhub.get_price_target(ticker.upper())
+            target = raw_finnhub.get("price_target", {})
             if target and "targetMean" in target:
-                parts.append("\n## 목표주가")
-                parts.append(f"- 평균: ${target.get('targetMean', 0):.2f}")
-                parts.append(f"- 최고: ${target.get('targetHigh', 0):.2f}")
-                parts.append(f"- 최저: ${target.get('targetLow', 0):.2f}")
+                parts.append(
+                    f"- 목표가 평균: ${target.get('targetMean', 0):.2f} (최고 ${target.get('targetHigh', 0):.2f})"
+                )
 
-            # Recent news
-            news = self.finnhub.get_company_news(ticker.upper())[:5]
+            news = raw_finnhub.get("news", [])
             if news:
-                parts.append("\n## 최근 뉴스")
-                for article in news:
-                    headline = article.get("headline", "")[:60]
-                    source = article.get("source", "")
-                    parts.append(f"- [{source}] {headline}")
+                parts.append(
+                    f"\n## 최근 뉴스 요약 [Source: Finnhub API | 최근 3일 기사]"
+                )
+                for article in news[:3]:
+                    headline = article.get("headline", "")[:70]
+                    parts.append(f"- {headline}")
 
-            # Peers
-            peers = self.finnhub.get_company_peers(ticker.upper())
+            peers = raw_finnhub.get("peers", [])
             if peers:
-                parts.append(f"\n## 경쟁사: {', '.join(peers[:7])}")
+                parts.append(
+                    f"\n## 주요 경쟁사 [Source: Finnhub API]: {', '.join(peers[:5])}"
+                )
 
         except Exception as e:
-            logger.warning(f"Finnhub data fetch error: {e}")
+            logger.warning(f"Formatting Finnhub data error: {e}")
 
         return "\n".join(parts)
 
     def generate_report(self, ticker: str) -> str:
-        """
-        Generate investment analysis report for a company
-
-        Args:
-            ticker: Company ticker symbol
-
-        Returns:
-            Markdown formatted report
-        """
+        """분석 레포트 생성 (병렬 수집 레이어 활용)"""
         try:
-            # Collect company data from Supabase
-            data = self._get_company_data(ticker)
-            context = self._format_data_context(data) if data.get("company") else ""
+            # 1. 모든 데이터 통합 병렬 수집 (한 번의 네트워크 대기)
+            if self.data_retriever:
+                logger.info(f"Fetching all data for {ticker} in parallel...")
+                all_data = self.data_retriever.get_company_context_parallel(ticker)
 
-            # Get Finnhub real-time data (always try)
-            finnhub_data = self._get_finnhub_data(ticker)
+                # 레포트용 데이터 재구성
+                db_data = {
+                    "company": all_data.get("company"),
+                    "annual_reports": all_data.get("financials", {}).get("annual", []),
+                    "quarterly_reports": all_data.get("financials", {}).get(
+                        "quarterly", []
+                    ),
+                    "relationships": all_data.get("relationships", []),
+                    "stock_prices": all_data.get("financials", {}).get("prices", []),
+                    "rag_context": all_data.get("rag_context", ""),
+                }
+
+                context = (
+                    self._format_data_context(db_data) if db_data.get("company") else ""
+                )
+                finnhub_data = self._get_finnhub_data(
+                    ticker, raw_finnhub=all_data.get("finnhub")
+                )
+            else:
+                # 레거시 방식 (데이터가 없을 경우)
+                data = self._get_company_data(ticker)
+                context = self._format_data_context(data)
+                finnhub_data = self._get_finnhub_data(ticker)
 
             # Combine contexts
             if context and finnhub_data:
@@ -345,17 +273,13 @@ class ReportGenerator:
             report = None
             used_model = self.model
 
-            # 1. Try Primary Model (gpt-5-nano)
+            # Generate report with selected model
             try:
                 logger.info(f"Sending request to OpenAI model: {self.model}")
                 response = self.openai_client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    response_format={"type": "text"},
-                    max_completion_tokens=3000,
-                    verbosity="medium",
-                    reasoning_effort="medium",
-                    store=False,
+                    max_tokens=3000,
                 )
                 report = response.choices[0].message.content
 
@@ -440,16 +364,12 @@ class ReportGenerator:
             ]
 
             try:
-                # 1. Try Primary Model
+                # Generate comparison report
                 logger.info(f"Sending request to OpenAI model: {self.model}")
                 response = self.openai_client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    response_format={"type": "text"},
-                    max_completion_tokens=4000,
-                    verbosity="medium",
-                    reasoning_effort="medium",
-                    store=False,
+                    max_tokens=4000,
                 )
                 content = response.choices[0].message.content
                 if not content:

@@ -22,6 +22,15 @@ except Exception as e:
     SUPABASE_AVAILABLE = False
     print(f"Supabase 연결 실패: {e}")
 
+# 환율 클라이언트 import
+try:
+    from src.tools.exchange_rate_client import get_exchange_client
+
+    EXCHANGE_AVAILABLE = True
+except Exception as e:
+    EXCHANGE_AVAILABLE = False
+    print(f"환율 클라이언트 로드 실패: {e}")
+
 
 def format_number(value, unit=""):
     """숫자 포맷팅 (억 단위)"""
@@ -93,6 +102,53 @@ def render():
 
     with col4:
         st.metric(label="🔄 마지막 업데이트", value="오늘")
+
+    # 환율 정보 섹션
+    st.markdown("---")
+    st.markdown("### 💱 실시간 환율 정보")
+
+    if EXCHANGE_AVAILABLE:
+        try:
+            exchange_client = get_exchange_client()
+            summary = exchange_client.get_major_rates_summary()
+            display_rates = summary.get("display_rates", {})
+            update_time = summary.get("update_time", "N/A")
+
+            rate_col1, rate_col2, rate_col3, rate_col4 = st.columns(4)
+
+            with rate_col1:
+                st.metric(
+                    label="🇺🇸 달러 (USD/KRW)",
+                    value=display_rates.get("USD/KRW", "-"),
+                )
+
+            with rate_col2:
+                st.metric(
+                    label="🇯🇵 엔화 (100 JPY/KRW)",
+                    value=display_rates.get("JPY/KRW (100엔)", "-"),
+                )
+
+            with rate_col3:
+                st.metric(
+                    label="🇪🇺 유로 (EUR/KRW)",
+                    value=display_rates.get("EUR/KRW", "-"),
+                )
+
+            with rate_col4:
+                st.metric(
+                    label="🇬🇧 파운드 (GBP/KRW)",
+                    value=display_rates.get("GBP/KRW", "-"),
+                )
+
+            # 환율 정보 출처 표시
+            st.caption(
+                f"📅 실시간 정보 (한국시간: {update_time}) | 출처: Global Open Exchange | 기준: KRW (매매기준율)"
+            )
+
+        except Exception as e:
+            st.warning(f"환율 정보를 불러올 수 없습니다: {e}")
+    else:
+        st.info("💱 환율 정보 서비스가 비활성화되어 있습니다.")
 
     st.markdown("---")
 

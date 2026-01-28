@@ -2,7 +2,7 @@
 
 ## 📁 Complete Directory Structure
 
-```
+```text
 SKN22-3rd-4Team/
 ├── app.py                          # Main Streamlit application
 ├── requirements.txt                # Python dependencies
@@ -29,7 +29,10 @@ SKN22-3rd-4Team/
 │   │   └── filing_processor.py   # SEC Filing Processor
 │   │
 │   ├── rag/                      # RAG & AI Logic
+│   │   ├── rag_base.py          # [NEW] RAG 모듈 공통 베이스 클래스
+│   │   ├── chat_tools.py        # [NEW] 챗봇용 도구(Tools) 정의
 │   │   ├── analyst_chat.py      # Investment Analyst Chatbot Logic
+│   │   ├── data_retriever.py    # Parallel Data Fetching Module (Optimization)
 │   │   ├── graph_rag.py         # GraphRAG Implementation
 │   │   ├── report_generator.py  # Investment Report Generator
 │   │   └── vector_store.py      # Vector Store Operations
@@ -84,7 +87,7 @@ SKN22-3rd-4Team/
 
 #### `report_generator.py`
 
-- Generates structured investment reports using `gpt-5-nano` (with `gpt-4o-mini` fallback).
+- Generates structured investment reports using `gpt-4.1-mini`.
 - Combines database financials and real-time market data.
 
 #### `graph_rag.py`
@@ -95,6 +98,21 @@ SKN22-3rd-4Team/
 #### `vector_store.py`
 
 - Manages semantic search functionality using Supabase pgvector.
+
+#### `data_retriever.py`
+
+- Orchestrates parallel data fetching from Supabase, GraphRAG, VectorStore, and Finnhub.
+- Significantly reduces latency for AI responses and report generation.
+
+#### `rag_base.py`
+
+- Base class for all RAG-related modules.
+- Centralizes client initialization (OpenAI, Supabase, Finnhub) and configuration.
+
+#### `chat_tools.py`
+
+- Defines the JSON structure and metadata for all chatbot tools.
+- Separates tool definitions from the core chatbot logic for better maintainability.
 
 ### UI Layer (`src/ui`)
 

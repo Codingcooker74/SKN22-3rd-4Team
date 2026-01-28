@@ -7,22 +7,11 @@ import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Any
+from datetime import datetime, timedelta
 from openai import OpenAI
-from supabase import create_client, Client
 import json
 import re
-from dotenv import load_dotenv
-
-# Import Finnhub client
-try:
-    from data.finnhub_client import get_finnhub_client, FinnhubClient
-
-    FINNHUB_AVAILABLE = True
-except ImportError:
-    FINNHUB_AVAILABLE = False
-
-
-load_dotenv()
+from rag.rag_base import RAGBase, EXCHANGE_AVAILABLE
 
 logger = logging.getLogger(__name__)
 
@@ -30,211 +19,138 @@ logger = logging.getLogger(__name__)
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 
-class AnalystChatbot:
+class AnalystChatbot(RAGBase):
     """
     애널리스트/기자 스타일로 금융 정보를 분석하고 답변하는 챗봇
     gpt-4.1-mini 사용
     """
 
     def __init__(self):
-        """Initialize chatbot with OpenAI and Supabase"""
+        """Initialize chatbot inheriting from RAGBase"""
+        super().__init__(model_name="gpt-4.1-mini")
 
-        # OpenAI client
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY 환경 변수가 필요합니다.")
-
-        self.openai_client = OpenAI(api_key=self.openai_api_key)
-        self.model = "gpt-4.1-mini"  # 챗봇용 모델
-        self.embedding_model = "text-embedding-3-small"
-
-        # Supabase client
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-
-        if not supabase_url or not supabase_key:
-            raise ValueError("SUPABASE_URL과 SUPABASE_KEY 환경 변수가 필요합니다.")
-
-        self.supabase: Client = create_client(supabase_url, supabase_key)
-
-        # Finnhub client (for real-time data)
-        self.finnhub = None
-        if FINNHUB_AVAILABLE:
+        # Exchange rate client (Special for Chatbot)
+        self.exchange_client = None
+        if EXCHANGE_AVAILABLE:
             try:
-                self.finnhub = get_finnhub_client()
-                if self.finnhub.api_key:
-                    logger.info("Finnhub client initialized")
-                else:
-                    self.finnhub = None
-            except Exception as e:
-                logger.warning(f"Finnhub init failed: {e}")
+                from tools.exchange_rate_client import get_exchange_client
+
+                self.exchange_client = get_exchange_client()
+            except ImportError:
+                try:
+                    from src.tools.exchange_rate_client import get_exchange_client
+
+                    self.exchange_client = get_exchange_client()
+                except Exception as e:
+                    logger.warning(f"Exchange client init failed: {e}")
 
         # Load system prompt
         self.system_prompt = self._load_prompt("analyst_chat.txt")
 
         # Conversation history
         self.conversation_history: List[Dict] = []
+        logger.info("AnalystChatbot initialized (inherited from RAGBase)")
 
-        logger.info("AnalystChatbot initialized")
-
-    def _load_prompt(self, filename: str) -> str:
-        """Load system prompt from file"""
-        prompt_path = PROMPTS_DIR / filename
-        try:
-            with open(prompt_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except FileNotFoundError:
-            logger.warning(f"Prompt file not found: {prompt_path}")
-            return "당신은 금융 분석 전문가입니다. 한국어로 답변하세요."
-
-    def _get_embedding(self, text: str) -> List[float]:
-        """Generate embedding for text"""
-        response = self.openai_client.embeddings.create(
-            model=self.embedding_model, input=text
-        )
-        return response.data[0].embedding
-
+    # _get_embedding Removed - Handled by VectorStore internally
     def _search_documents(self, query: str, limit: int = 5) -> List[Dict]:
-        """Search relevant documents from Supabase"""
-        try:
-            query_embedding = self._get_embedding(query)
-
-            result = self.supabase.rpc(
-                "match_documents",
-                {"query_embedding": query_embedding, "match_count": limit},
-            ).execute()
-
-            return result.data if result.data else []
-        except Exception as e:
-            logger.error(f"Document search error: {e}")
-            return []
+        """Search relevant documents"""
+        if self.vector_store:
+            try:
+                return self.vector_store.similarity_search(query, k=limit)
+            except Exception as e:
+                logger.error(f"VectorStore search failed: {e}")
+        return []
 
     def _get_company_info(self, ticker: str) -> Optional[Dict]:
-        """Get company information from Supabase"""
-        try:
-            result = (
-                self.supabase.table("companies")
-                .select("*")
-                .eq("ticker", ticker.upper())
-                .execute()
-            )
-            return result.data[0] if result.data else None
-        except Exception as e:
-            logger.error(f"Company info error: {e}")
-            return None
+        """Get company information"""
+        if self.graph_rag:
+            try:
+                return self.graph_rag.get_company(ticker.upper())
+            except Exception as e:
+                logger.error(f"GraphRAG get_company failed: {e}")
+        return None
 
     def _get_relationships(self, ticker: str) -> List[Dict]:
         """Get company relationships"""
-        try:
-            outgoing = (
-                self.supabase.table("company_relationships")
-                .select("*")
-                .eq("source_ticker", ticker.upper())
-                .execute()
-            )
-
-            incoming = (
-                self.supabase.table("company_relationships")
-                .select("*")
-                .eq("target_ticker", ticker.upper())
-                .execute()
-            )
-
-            return (outgoing.data or []) + (incoming.data or [])
-        except Exception as e:
-            logger.error(f"Relationships error: {e}")
-            return []
+        if self.graph_rag:
+            try:
+                data = self.graph_rag.find_relationships(ticker.upper())
+                if data:
+                    return data.get("outgoing", []) + data.get("incoming", [])
+            except Exception as e:
+                logger.error(f"GraphRAG find_relationships failed: {e}")
+        return []
 
     def _build_context(self, query: str, ticker: Optional[str] = None) -> str:
-        """Build context from RAG search, company data, and real-time Finnhub data"""
+        """Build context from RAG search, company data, and real-time Finnhub data (Optimized with Parallel Fetch)"""
+        if not ticker:
+            # Ticker가 없는 경우 문서 검색만 수행
+            docs = self._search_documents(query, limit=5)
+            if not docs:
+                return "추가 컨텍스트 없음"
+
+            parts = ["## 관련 문서"]
+            for doc in docs:
+                parts.append(f"- {doc.get('content', '')[:500]}")
+            return "\n".join(parts)
+
+        # Ticker가 있는 경우 DataRetriever를 통해 모든 데이터를 병렬로 수집
+        if not self.data_retriever:
+            return "데이터 수집 모듈 미작동"
+
+        logger.info(f"Building context for query: {query}, ticker: {ticker}")
+        all_data = self.data_retriever.get_company_context_parallel(
+            ticker, include_finnhub=True, include_rag=True
+        )
+
         context_parts = []
 
-        # 1. Search relevant documents
-        docs = self._search_documents(query, limit=3)
-        if docs:
-            context_parts.append("## 관련 문서")
-            for doc in docs:
-                content = doc.get("content", "")[:500]
-                context_parts.append(f"- {content}")
+        # 1. Company Info
+        company = all_data.get("company")
+        if company:
+            context_parts.append(f"## 회사 정보: {company.get('company_name', ticker)}")
+            context_parts.append(
+                f"- 섹터: {company.get('sector', 'N/A')}, 산업: {company.get('industry', 'N/A')}"
+            )
+            context_parts.append(f"- 시가총액: {company.get('market_cap', 'N/A')}")
 
-        # 2. Get company info if ticker provided
-        if ticker:
-            company = self._get_company_info(ticker)
-            if company:
+        # 2. Relationships
+        rels = all_data.get("relationships", [])
+        if rels:
+            context_parts.append(f"\n## 기업 관계 ({len(rels)}개)")
+            for rel in rels[:5]:
                 context_parts.append(
-                    f"\n## 회사 정보: {company.get('company_name', ticker)}"
+                    f"- {rel.get('source_company')} → [{rel.get('relationship_type', '관련')}] → {rel.get('target_company')}"
                 )
-                context_parts.append(f"- 티커: {company.get('ticker')}")
-                context_parts.append(f"- 섹터: {company.get('sector', 'N/A')}")
-                context_parts.append(f"- 산업: {company.get('industry', 'N/A')}")
-                context_parts.append(f"- 시가총액: {company.get('market_cap', 'N/A')}")
 
-            # Get relationships
-            relationships = self._get_relationships(ticker)
-            if relationships:
-                context_parts.append(f"\n## 기업 관계 ({len(relationships)}개)")
-                for rel in relationships[:5]:
-                    rel_type = rel.get("relationship_type", "관련")
-                    source = rel.get("source_company", "")
-                    target = rel.get("target_company", "")
-                    context_parts.append(f"- {source} → [{rel_type}] → {target}")
+        # 3. Finnhub Real-time
+        fh = all_data.get("finnhub", {})
+        quote = fh.get("quote", {})
+        if quote and "c" in quote:
+            current = quote.get("c", 0)
+            change = current - quote.get("pc", 0)
+            pct = (change / quote.get("pc", 1) * 100) if quote.get("pc") else 0
+            context_parts.append(
+                f"\n## 실시간 시세: ${current:.2f} ({'+' if change >= 0 else ''}{change:.2f}, {pct:.2f}%)"
+            )
 
-            # 3. Get real-time Finnhub data
-            if self.finnhub:
-                try:
-                    # Real-time quote
-                    quote = self.finnhub.get_quote(ticker)
-                    if quote and "c" in quote:
-                        current = quote.get("c", 0)
-                        prev_close = quote.get("pc", 0)
-                        change = current - prev_close
-                        change_pct = (change / prev_close * 100) if prev_close else 0
+        metrics = fh.get("metrics", {}).get("metric", {})
+        if metrics:
+            context_parts.append(
+                f"- P/E: {metrics.get('peBasicExclExtraTTM', 'N/A')}, P/B: {metrics.get('pbAnnual', 'N/A')}"
+            )
 
-                        context_parts.append(f"\n## 실시간 시세 (Finnhub)")
-                        context_parts.append(f"- 현재가: ${current:.2f}")
-                        context_parts.append(
-                            f"- 변동: {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.2f}%)"
-                        )
-                        context_parts.append(
-                            f"- 고가/저가: ${quote.get('h', 0):.2f} / ${quote.get('l', 0):.2f}"
-                        )
+        news = fh.get("news", [])
+        if news:
+            context_parts.append("\n## 최근 뉴스 요약")
+            for article in news[:3]:
+                context_parts.append(f"- {article.get('headline', '')[:80]}")
 
-                    # Analyst recommendations
-                    recs = self.finnhub.get_recommendation_trends(ticker)
-                    if recs and len(recs) > 0:
-                        latest = recs[0]
-                        context_parts.append(f"\n## 애널리스트 추천")
-                        context_parts.append(
-                            f"- Strong Buy: {latest.get('strongBuy', 0)}"
-                        )
-                        context_parts.append(f"- Buy: {latest.get('buy', 0)}")
-                        context_parts.append(f"- Hold: {latest.get('hold', 0)}")
-                        context_parts.append(f"- Sell: {latest.get('sell', 0)}")
-
-                    # Price target
-                    target = self.finnhub.get_price_target(ticker)
-                    if target and "targetMean" in target:
-                        context_parts.append(f"\n## 목표주가")
-                        context_parts.append(
-                            f"- 평균: ${target.get('targetMean', 0):.2f}"
-                        )
-                        context_parts.append(
-                            f"- 최고: ${target.get('targetHigh', 0):.2f}"
-                        )
-                        context_parts.append(
-                            f"- 최저: ${target.get('targetLow', 0):.2f}"
-                        )
-
-                    # Recent news (top 3)
-                    news = self.finnhub.get_company_news(ticker)[:3]
-                    if news:
-                        context_parts.append(f"\n## 최근 뉴스")
-                        for article in news:
-                            headline = article.get("headline", "")[:80]
-                            context_parts.append(f"- {headline}")
-
-                except Exception as e:
-                    logger.warning(f"Finnhub data fetch error: {e}")
+        # 4. RAG Context (10-K)
+        rag_text = all_data.get("rag_context", "")
+        if rag_text:
+            context_parts.append("\n## 10-K 보고서 분석 내용")
+            context_parts.append(rag_text)
 
         return "\n".join(context_parts) if context_parts else "추가 컨텍스트 없음"
 
@@ -460,143 +376,138 @@ class AnalystChatbot:
             logger.error(f"Tool execution failed: {e}")
             return json.dumps({"error": str(e)})
 
+    def _handle_tool_call(self, tool_call) -> str:
+        """도구 호출(Tool Call)을 실행하고 결과를 반환합니다."""
+        function_name = tool_call.function.name
+        function_args = json.loads(tool_call.function.arguments)
+
+        logger.info(f"Tool Call: {function_name} with {function_args}")
+
+        try:
+            if function_name == "get_stock_quote":
+                res = self.finnhub.get_quote(function_args.get("ticker"))
+                return json.dumps(res, ensure_ascii=False)
+
+            elif function_name == "get_company_profile":
+                res = self.finnhub.get_company_profile(function_args.get("ticker"))
+                return json.dumps(res, ensure_ascii=False)
+
+            elif function_name == "get_price_target":
+                res = self.finnhub.get_price_target(function_args.get("ticker"))
+                return json.dumps(res, ensure_ascii=False)
+
+            elif function_name == "get_company_news":
+                res = self.finnhub.get_company_news(
+                    function_args.get("ticker"),
+                    function_args.get("from_date"),
+                    function_args.get("to"),
+                )
+                return json.dumps(res[:5], ensure_ascii=False)
+
+            elif function_name == "get_market_news":
+                res = self.finnhub.get_market_news(
+                    function_args.get("category", "general")
+                )
+                return json.dumps(res[:5], ensure_ascii=False)
+
+            elif function_name == "register_company":
+                return self._register_company(function_args.get("ticker"))
+
+            elif function_name == "get_exchange_rate":
+                if not self.exchange_client:
+                    return json.dumps({"error": "환율 서비스 비활성화"})
+                from_curr = function_args.get("from_currency", "USD")
+                to_curr = function_args.get("to_currency", "KRW")
+                rate = self.exchange_client.get_rate(from_curr, to_curr)
+                if rate:
+                    return json.dumps(
+                        {
+                            "from": from_curr,
+                            "to": to_curr,
+                            "rate": rate,
+                            "formatted": self.exchange_client.format_rate_for_display(
+                                from_curr, to_curr, rate
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                return json.dumps({"error": "환율 조회 실패"})
+
+            elif function_name == "convert_to_krw":
+                if not self.exchange_client:
+                    return json.dumps({"error": "환율 서비스 비활성화"})
+                usd_amount = function_args.get("usd_amount", 0)
+                krw_amount = self.exchange_client.convert(usd_amount, "USD", "KRW")
+                rate = self.exchange_client.get_rate("USD", "KRW")
+                if krw_amount and rate:
+                    return json.dumps(
+                        {
+                            "usd_amount": usd_amount,
+                            "krw_amount": krw_amount,
+                            "rate": rate,
+                            "formatted": f"${usd_amount:,.2f} = ₩{krw_amount:,.0f} (환율: {rate:,.2f}원/달러)",
+                        },
+                        ensure_ascii=False,
+                    )
+                return json.dumps({"error": "변환 실패"})
+
+            elif function_name == "get_stock_candles":
+                ticker = function_args.get("ticker").upper()
+                resolution = function_args.get("resolution", "D")
+                days = function_args.get("days", 30)
+
+                to_date = datetime.now()
+                from_date = to_date - timedelta(days=days)
+
+                res = self.finnhub.get_candles(ticker, resolution, from_date, to_date)
+                if res and res.get("s") == "ok":
+                    res["ticker"] = ticker
+                    res["resolution"] = resolution
+                    return json.dumps(res, ensure_ascii=False)
+                return json.dumps(
+                    {"error": "주가 데이터를 가져오지 못했습니다."}, ensure_ascii=False
+                )
+
+            return json.dumps({"error": f"Unknown function: {function_name}"})
+        except Exception as e:
+            logger.error(f"Error executing {function_name}: {e}")
+            return json.dumps({"error": f"실행 중 오류: {str(e)}"})
+
     def chat(
         self, message: str, ticker: Optional[str] = None, use_rag: bool = True
     ) -> Dict[str, Any]:
         """
-        Process user message and generate response with optional report
+        사용자 메시지를 처리하고 답변을 생성합니다. (리팩토링됨)
         """
+        # 1. 도구(Tools) 로드 (별도 파일로 분리됨)
+        try:
+            from rag.chat_tools import get_chat_tools
+        except ImportError:
+            from src.rag.chat_tools import get_chat_tools
 
-        # Tools definition
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_stock_quote",
-                    "description": "Get real-time stock price (c), change (d), percent change (dp), high (h), low (l).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "ticker": {
-                                "type": "string",
-                                "description": "Company ticker symbol (e.g. AAPL)",
-                            }
-                        },
-                        "required": ["ticker"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_company_profile",
-                    "description": "Get company profile (industry, market cap, IPO date, etc).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"ticker": {"type": "string"}},
-                        "required": ["ticker"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_price_target",
-                    "description": "Get analyst price target and consensus.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {"ticker": {"type": "string"}},
-                        "required": ["ticker"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_company_news",
-                    "description": "Get recent company news.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "ticker": {"type": "string"},
-                            "from_date": {
-                                "type": "string",
-                                "description": "YYYY-MM-DD",
-                            },
-                            "to": {"type": "string", "description": "YYYY-MM-DD"},
-                        },
-                        "required": ["ticker"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_market_news",
-                    "description": "Get general market news.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "category": {
-                                "type": "string",
-                                "enum": ["general", "forex", "crypto", "merger"],
-                                "default": "general",
-                            }
-                        },
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "register_company",
-                    "description": "Register a new company to the database if the user asks to add/register it.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "ticker": {
-                                "type": "string",
-                                "description": "The company ticker symbol to register.",
-                            }
-                        },
-                        "required": ["ticker"],
-                    },
-                },
-            },
-        ]
+        tools = get_chat_tools()
 
         try:
-            # Detect tickers if not provided (keeping legacy support for RAG context)
-            # Detect tickers if not provided (keeping legacy support for RAG context)
+            # 2. 티커 분석 및 컨텍스트 구축
             tickers = []
             if ticker:
-                # Resolve partial/Korean ticker
                 resolved = self._resolve_ticker_name(ticker)
-                if resolved:
-                    tickers = [resolved]
-                else:
-                    tickers = [ticker]  # Fallback
+                tickers = [resolved] if resolved else [ticker]
 
-            # Build initial messages
             messages = [{"role": "system", "content": self.system_prompt}]
             messages.extend(self.conversation_history[-6:])
 
-            # If explicit ticker context is available, add it (Hybrid approach)
             context = ""
             if use_rag and tickers:
-                context_parts = []
-                for t in tickers:
-                    context_parts.append(self._build_context(message, t))
+                context_parts = [self._build_context(message, t) for t in tickers]
                 context = "\n\n---\n\n".join(context_parts)
 
-            user_content = message
-            if context:
-                # If we already have context, we might not need tools, but we allow it
-                user_content = f"[컨텍스트]\n{context}\n\n[질문]\n{message}"
-
+            user_content = (
+                f"[컨텍스트]\n{context}\n\n[질문]\n{message}" if context else message
+            )
             messages.append({"role": "user", "content": user_content})
 
-            # First Call (Prediction)
+            # 3. LLM 호출 (1차: 도구 사용 여부 결정)
             response = self.openai_client.chat.completions.create(
                 model=self.model,
                 messages=messages,
@@ -605,141 +516,56 @@ class AnalystChatbot:
                 max_completion_tokens=2000,
             )
 
-            response_message = response.choices[0].message
-            tool_calls = response_message.tool_calls
+            resp_msg = response.choices[0].message
+            tool_calls = resp_msg.tool_calls
 
-            # Handle Tool Calls
+            # 4. 도구 호출 처리
+            chart_data = None
             if tool_calls:
-                messages.append(
-                    response_message
-                )  # Add the assistant's request to history
-
+                messages.append(resp_msg)
                 for tool_call in tool_calls:
-                    function_name = tool_call.function.name
-                    function_args = json.loads(tool_call.function.arguments)
-
-                    logger.info(f"Tool Call: {function_name} with {function_args}")
-
-                    tool_result = ""
-                    if function_name == "get_stock_quote":
-                        res = self.finnhub.get_quote(function_args.get("ticker"))
-                        tool_result = json.dumps(res, ensure_ascii=False)
-                    elif function_name == "get_company_profile":
-                        res = self.finnhub.get_company_profile(
-                            function_args.get("ticker")
-                        )
-                        tool_result = json.dumps(res, ensure_ascii=False)
-                    elif function_name == "get_price_target":
-                        res = self.finnhub.get_price_target(function_args.get("ticker"))
-                        tool_result = json.dumps(res, ensure_ascii=False)
-                    elif function_name == "get_company_news":
-                        res = self.finnhub.get_company_news(
-                            function_args.get("ticker"),
-                            function_args.get("from_date"),
-                            function_args.get("to"),
-                        )
-                        tool_result = json.dumps(res[:5], ensure_ascii=False)
-                    elif function_name == "get_market_news":
-                        res = self.finnhub.get_market_news(
-                            function_args.get("category", "general")
-                        )
-                        tool_result = json.dumps(res[:5], ensure_ascii=False)
-                    elif function_name == "register_company":
-                        tool_result = self._register_company(
-                            function_args.get("ticker")
-                        )
-                    else:
-                        tool_result = json.dumps(
-                            {"error": f"Unknown function: {function_name}"}
-                        )
-
+                    result = self._handle_tool_call(tool_call)
                     messages.append(
                         {
                             "tool_call_id": tool_call.id,
                             "role": "tool",
-                            "name": function_name,
-                            "content": tool_result,
+                            "name": tool_call.function.name,
+                            "content": result,
                         }
                     )
 
-                    # Extract ticker for report generation if needed
-                    if not tickers and "ticker" in function_args:
-                        collected_ticker = function_args["ticker"]
-                        if (
-                            isinstance(collected_ticker, str)
-                            and len(collected_ticker) <= 5
-                        ):
-                            tickers.append(collected_ticker.upper())
+                    # 차트 데이터 추출
+                    if tool_call.function.name == "get_stock_candles":
+                        try:
+                            parsed_res = json.loads(result)
+                            if "error" not in parsed_res:
+                                chart_data = parsed_res
+                        except Exception:
+                            pass
 
-                # Second Call (Final Response)
+                    # 도구 호출에서 티커가 발견되면 리스트에 추가 (레포트용)
+                    args = json.loads(tool_call.function.arguments)
+                    if "ticker" in args and not tickers:
+                        t = args["ticker"].upper()
+                        if len(t) <= 5:
+                            tickers.append(t)
+
+                # 2차 LLM 호출 (최종 답변)
                 final_response = self.openai_client.chat.completions.create(
                     model=self.model, messages=messages, max_completion_tokens=2000
                 )
                 assistant_message = final_response.choices[0].message.content
             else:
-                assistant_message = response_message.content
+                assistant_message = resp_msg.content
 
-            # Check for Report Generation Intent (Legacy check for PDF)
-            generate_report = any(
-                keyword in message.lower()
-                for keyword in [
-                    "레포트",
-                    "보고서",
-                    "다운로드",
-                    "파일",
-                    "report",
-                    "자료",
-                    "pdf",
-                    "피디에프",
-                ]
+            # 5. 레포트 생성 의도 파악 및 처리
+            report_data, report_type = self._process_report_request(
+                message, assistant_message, tickers
             )
+            if report_data:
+                assistant_message += f"\n\n(요청하신 분석 보고서를 {report_type.upper()}로 생성했습니다. 하단 버튼으로 다운로드하세요.)"
 
-            # Initialize report variables outside conditional
-            report_data = None
-            report_type = "md"
-
-            if generate_report:
-                target_ticker = None
-                if tickers:
-                    target_ticker = tickers[0]
-
-                if tickers:
-                    tickers = list(dict.fromkeys(tickers))
-
-                # 3. If still no ticker, look back at recent conversation history
-                if not target_ticker:
-                    # Look for tickers in previous messages
-                    for hist_msg in reversed(self.conversation_history):
-                        # Search for 2-5 capital letters (Ticker format)
-                        matches = re.findall(r"\b[A-Z]{2,5}\b", hist_msg["content"])
-                        if matches:
-                            target_ticker = matches[0]
-                            break
-
-                if target_ticker:
-                    from rag.report_generator import ReportGenerator
-                    from utils.pdf_utils import create_pdf
-
-                    generator = ReportGenerator()
-                    report_markdown = generator.generate_report(target_ticker)
-
-                    # Try to convert to PDF
-                    try:
-                        pdf_bytes = create_pdf(report_markdown)
-                        report_data = pdf_bytes
-                        report_type = "pdf"
-                        assistant_message += f"\n\n(요청하신 {target_ticker} 분석 보고서를 PDF로 생성했습니다. 하단 버튼으로 다운로드하세요.)"
-                    except Exception as e:
-                        logger.warning(
-                            f"PDF creation failed: {e}. Falling back to Markdown."
-                        )
-                        report_data = report_markdown
-                        report_type = "md"
-                        assistant_message += f"\n\n(PDF 생성 중 문제가 발생하여 마크다운(.md) 답변 자료를 준비했습니다. 하단 버튼으로 다운로드하세요.)"
-                else:
-                    assistant_message += "\n\n(어떤 기업에 대한 보고서가 필요하신가요? 기업 이름이나 티커를 말씀해 주세요.)"
-
-            # Update history
+            # 6. 히스토리 업데이트
             self.conversation_history.append({"role": "user", "content": message})
             self.conversation_history.append(
                 {"role": "assistant", "content": assistant_message}
@@ -750,11 +576,58 @@ class AnalystChatbot:
                 "report": report_data,
                 "report_type": report_type,
                 "tickers": tickers,
+                "chart_data": chart_data,
             }
 
         except Exception as e:
             logger.error(f"Chat error: {e}")
             return {"content": f"오류 발생: {str(e)}", "report": None}
+
+    def _process_report_request(
+        self, message: str, assistant_message: str, tickers: List[str]
+    ):
+        """레포트 생성 요청 여부를 확인하고 실행합니다."""
+        keywords = [
+            "레포트",
+            "보고서",
+            "다운로드",
+            "파일",
+            "report",
+            "자료",
+            "pdf",
+            "피디에프",
+        ]
+        if not any(k in message.lower() for k in keywords):
+            return None, "md"
+
+        target_ticker = tickers[0] if tickers else None
+
+        # 히스토리에서 티커 역추적
+        if not target_ticker:
+            for hist_msg in reversed(self.conversation_history):
+                matches = re.findall(r"\b[A-Z]{2,5}\b", hist_msg["content"])
+                if matches:
+                    target_ticker = matches[0]
+                    break
+
+        if not target_ticker:
+            return None, "md"
+
+        try:
+            from rag.report_generator import ReportGenerator
+            from utils.pdf_utils import create_pdf
+
+            generator = ReportGenerator()
+            report_md = generator.generate_report(target_ticker)
+
+            try:
+                pdf_bytes = create_pdf(report_md)
+                return pdf_bytes, "pdf"
+            except Exception:
+                return report_md, "md"
+        except Exception as e:
+            logger.warning(f"Report generation failed: {e}")
+            return None, "md"
 
     def clear_history(self):
         """Clear conversation history"""
