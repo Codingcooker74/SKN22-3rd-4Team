@@ -99,28 +99,7 @@ selected_page = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# Sidebar info
-with st.sidebar:
-    st.markdown("### 📊 소개")
-    st.markdown(
-        """
-    미국 상장사 재무제표를 AI로 분석하는 애플리케이션:
-    
-    - **GraphRAG**: 기업 간 관계 분석
-    - **Text-to-SQL**: 자연어 질의응답
-    - **AI 인사이트**: 투자 추천
-    """
-    )
-
 # Main content routing
 if selected_page in pages:
     pages[selected_page].render()
 
-# Footer
-st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: #6c757d; padding: 1rem;'>"
-    "미국 재무제표 분석 및 투자 인사이트 봇 | AI로 구동 🚀"
-    "</div>",
-    unsafe_allow_html=True,
-)

@@ -66,8 +66,7 @@ def render():
         try:
             companies_df = get_companies()
             company_count = len(companies_df)
-
-            st.success(f"✅ Supabase 연결됨 | {company_count}개 기업 데이터 로드됨")
+            # 연결 성공 시 조용히 진행
         except Exception as e:
             st.warning(f"⚠️ 데이터 로드 중 오류: {e}")
             companies_df = pd.DataFrame()
