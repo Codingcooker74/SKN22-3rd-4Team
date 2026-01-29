@@ -40,7 +40,7 @@ try:
     STOCK_API_AVAILABLE = True
 except ImportError:
     try:
-        from src.data.stock_api_client import get_stock_api_client
+        from src.tools.stock_api_client import get_stock_api_client
 
         STOCK_API_AVAILABLE = True
     except ImportError:

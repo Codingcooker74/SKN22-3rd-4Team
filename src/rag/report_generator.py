@@ -133,8 +133,9 @@ class ReportGenerator(RAGBase):
 
     def _get_finnhub_data(self, ticker: str, raw_finnhub: Optional[Dict] = None) -> str:
         """Get real-time data from Finnhub (Refactored to use pre-fetched data)"""
+        # Finnhub 없으면 yfinance 폴백 사용
         if not self.finnhub:
-            return ""
+            return self._get_yfinance_fallback(ticker)
 
         # 만약 raw_finnhub가 없으면 직접 수집 (하위 호환성)
         if not raw_finnhub:
@@ -144,7 +145,11 @@ class ReportGenerator(RAGBase):
                 )
                 raw_finnhub = raw_data.get("finnhub", {})
             else:
-                return ""
+                return self._get_yfinance_fallback(ticker)
+
+        # raw_finnhub가 비어있으면 yfinance 폴백
+        if not raw_finnhub or not raw_finnhub.get("quote"):
+            return self._get_yfinance_fallback(ticker)
 
         parts = []
         try:
@@ -218,6 +223,89 @@ class ReportGenerator(RAGBase):
             logger.warning(f"Formatting Finnhub data error: {e}")
 
         return "\n".join(parts)
+
+    def _get_yfinance_fallback(self, ticker: str) -> str:
+        """yfinance를 사용한 실시간 데이터 폴백"""
+        try:
+            import yfinance as yf
+            import pytz
+
+            kst = pytz.timezone("Asia/Seoul")
+            now_kst = datetime.now(kst).strftime("%Y-%m-%d %H:%M KST")
+
+            stock = yf.Ticker(ticker)
+            info = stock.info
+
+            if not info or "symbol" not in info:
+                return ""
+
+            parts = []
+            parts.append(f"## 실시간 시세 [Source: yfinance | 조회시간: {now_kst}]")
+
+            current_price = info.get("currentPrice") or info.get(
+                "regularMarketPrice", 0
+            )
+            prev_close = info.get("previousClose", 0)
+            if current_price and prev_close:
+                change = current_price - prev_close
+                change_pct = (change / prev_close * 100) if prev_close else 0
+                parts.append(f"- 현재가: ${current_price:.2f}")
+                parts.append(
+                    f"- 변동: {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.2f}%)"
+                )
+
+            day_high = info.get("dayHigh", 0)
+            day_low = info.get("dayLow", 0)
+            if day_high and day_low:
+                parts.append(f"- 고가/저가: ${day_high:.2f} / ${day_low:.2f}")
+
+            parts.append(f"\n## 주요 재무 지표 [Source: yfinance | TTM 기준]")
+            parts.append(f"- P/E (TTM): {info.get('trailingPE', 'N/A')}")
+            parts.append(f"- Forward P/E: {info.get('forwardPE', 'N/A')}")
+            parts.append(f"- P/B: {info.get('priceToBook', 'N/A')}")
+
+            roe = info.get("returnOnEquity")
+            if roe:
+                parts.append(f"- ROE: {roe * 100:.2f}%")
+
+            div_yield = info.get("dividendYield")
+            if div_yield:
+                parts.append(f"- 배당수익률: {div_yield * 100:.2f}%")
+
+            # 52주 고가/저가
+            week52_high = info.get("fiftyTwoWeekHigh", 0)
+            week52_low = info.get("fiftyTwoWeekLow", 0)
+            if week52_high and week52_low:
+                parts.append(f"\n## 52주 가격 범위 [Source: yfinance]")
+                parts.append(f"- 52주 최고가: ${week52_high:.2f}")
+                parts.append(f"- 52주 최저가: ${week52_low:.2f}")
+
+            # 시가총액
+            market_cap = info.get("marketCap", 0)
+            if market_cap:
+                if market_cap >= 1e12:
+                    parts.append(f"- 시가총액: ${market_cap/1e12:.2f}T")
+                elif market_cap >= 1e9:
+                    parts.append(f"- 시가총액: ${market_cap/1e9:.2f}B")
+
+            # 애널리스트 추천
+            rec = info.get("recommendationKey")
+            if rec:
+                parts.append(f"\n## 애널리스트 의견 [Source: yfinance]")
+                parts.append(f"- 추천: {rec.upper()}")
+                target_mean = info.get("targetMeanPrice")
+                target_high = info.get("targetHighPrice")
+                if target_mean:
+                    parts.append(f"- 목표가 평균: ${target_mean:.2f}")
+                if target_high:
+                    parts.append(f"- 목표가 최고: ${target_high:.2f}")
+
+            logger.info(f"yfinance fallback used for {ticker}")
+            return "\n".join(parts)
+
+        except Exception as e:
+            logger.warning(f"yfinance fallback failed for {ticker}: {e}")
+            return ""
 
     def generate_report(self, ticker: str) -> str:
         """분석 레포트 생성 (병렬 수집 레이어 활용)"""
@@ -378,7 +466,7 @@ class ReportGenerator(RAGBase):
 
             except Exception as e:
                 logger.warning(
-                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4.1-mini"
+                    f"Primary model {self.model} failed: {e}. Falling back to gpt-4o-mini"
                 )
                 try:
                     # 2. Try Fallback Model

@@ -31,10 +31,10 @@ GRAPH_MAX_TOKENS = 1500
 
 
 # =============================================================================
-# REPORT MODELS (gpt-5-nano)
+# REPORT MODELS (Standardized to gpt-4.1-mini)
 # =============================================================================
 
-REPORT_MODEL = os.getenv("REPORT_MODEL", "gpt-5-nano")
+REPORT_MODEL = os.getenv("REPORT_MODEL", "gpt-4.1-mini")
 REPORT_MAX_TOKENS = 3000
 COMPARISON_MAX_TOKENS = 4000
 
@@ -87,7 +87,8 @@ def validate_api_keys() -> dict:
     """API 키 상태 확인"""
     return {
         "openai": bool(OPENAI_API_KEY),
-        "finnhub": bool(FINNHUB_API_KEY) and FINNHUB_API_KEY != "your_finnhub_api_key_here",
+        "finnhub": bool(FINNHUB_API_KEY)
+        and FINNHUB_API_KEY != "your_finnhub_api_key_here",
     }
 
 

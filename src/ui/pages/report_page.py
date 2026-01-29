@@ -3,7 +3,7 @@ Investment Report Generation Page
 """
 
 import streamlit as st
-from rag.report_generator import ReportGenerator
+import streamlit as st
 from utils.pdf_utils import create_pdf
 
 
@@ -31,6 +31,8 @@ def render():
 
     if generate_btn and ticker:
         try:
+            from rag.report_generator import ReportGenerator  # Lazy import
+
             generator = ReportGenerator()
 
             # Check if multiple tickers (comma separated)

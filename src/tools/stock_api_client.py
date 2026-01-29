@@ -397,6 +397,14 @@ class StockAPIClient:
                 return data
             return []
 
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 403:
+                logger.warning(
+                    f"FMP API 403 Forbidden: 해당 기간({from_date}~{to_date})의 데이터 접근 권한이 없습니다. (무료 플랜 제한 가능성)"
+                )
+                return []
+            logger.error(f"FMP Earnings Calendar API error: {e}")
+            return []
         except Exception as e:
             logger.error(f"FMP Earnings Calendar API error: {e}")
             return []
@@ -417,13 +425,13 @@ class StockAPIClient:
 
         arrow = "📈" if change >= 0 else "📉"
 
-        return f"""
-{arrow} **{symbol.upper()}** 실시간 시세
-- 현재가: ${current:.2f}
-- 변동: {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.2f}%)
-- 고가: ${quote.get('h', 0):.2f} / 저가: ${quote.get('l', 0):.2f}
-- 전일종가: ${prev_close:.2f}
-""".strip()
+        return (
+            f"{arrow} **{symbol.upper()}** 실시간 시세\n"
+            f"- 현재가: ${current:.2f}\n"
+            f"- 변동: {'+' if change >= 0 else ''}{change:.2f} ({'+' if change_pct >= 0 else ''}{change_pct:.2f}%)\n"
+            f"- 고가: ${quote.get('h', 0):.2f} / 저가: ${quote.get('l', 0):.2f}\n"
+            f"- 전일종가: ${prev_close:.2f}"
+        )
 
     def format_news_summary(self, symbol: str, limit: int = 5) -> str:
         """최근 뉴스를 읽기 쉬운 텍스트로 변환"""

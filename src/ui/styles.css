@@ -326,3 +326,86 @@ body {
         align-items: center;
     }
 }
+
+/* ==========================================================================================
+   Streamlit Specific Overrides (Global)
+   - Radio Buttons as Tabs (Hidden Circles)
+   - Remove default borders
+   ========================================================================================== */
+
+/* Hide radio button circles globally */
+[data-testid="stRadio"]>div[role="radiogroup"]>label>div:first-child {
+    display: none !important;
+}
+
+/* Container styling - mimic tabs */
+[data-testid="stRadio"]>div[role="radiogroup"] {
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    border-bottom: 2px solid #2d3748;
+    /* Darker border for dark theme */
+    background: transparent;
+}
+
+/* Remove default white line/border if present */
+div[role="radiogroup"] {
+    border: none !important;
+}
+
+/* Labels styling */
+[data-testid="stRadio"]>div[role="radiogroup"]>label {
+    background-color: transparent !important;
+    padding: 10px 20px !important;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    margin-right: 0 !important;
+    transition: all 0.2s;
+    color: #a0aec0 !important;
+    /* Inactive color */
+}
+
+/* Hover effect */
+[data-testid="stRadio"]>div[role="radiogroup"]>label:hover {
+    color: #00d4ff !important;
+    border-bottom: 3px solid rgba(0, 212, 255, 0.5);
+}
+
+/* Selected state */
+[data-testid="stRadio"]>div[role="radiogroup"]>label[data-checked="true"] {
+    color: #00d4ff !important;
+    font-weight: bold;
+    border-bottom: 3px solid #00d4ff;
+}
+
+/* Text alignment fix */
+[data-testid="stRadio"] p {
+    font-size: 1rem;
+    margin: 0;
+    padding: 0;
+}
+
+/* Sidebar specific overrides (optional if needed differently) */
+section[data-testid="stSidebar"] [data-testid="stRadio"]>div[role="radiogroup"] {
+    flex-direction: column !important;
+    /* Sidebar keeps vertical layout */
+    border-bottom: none !important;
+    gap: 5px;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"]>div[role="radiogroup"]>label {
+    border-bottom: none !important;
+    border-left: 3px solid transparent;
+    padding: 10px 15px !important;
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"]>div[role="radiogroup"]>label[data-checked="true"] {
+    border-bottom: none !important;
+    border-left: 3px solid #00d4ff;
+    background: linear-gradient(90deg, rgba(0, 212, 255, 0.1) 0%, transparent 100%);
+}
+
+section[data-testid="stSidebar"] [data-testid="stRadio"]>div[role="radiogroup"]>label:hover {
+    border-bottom: none !important;
+    border-left: 3px solid rgba(0, 212, 255, 0.5);
+}

@@ -27,43 +27,50 @@ except ImportError:
         render_page_css,
     )
 
-# ChatConnector 로드 (보안 레이어 포함)
-try:
-    from core.chat_connector import ChatConnector, ChatRequest, get_chat_connector
-    from core.input_validator import ThreatLevel
-    CONNECTOR_AVAILABLE = True
-except ImportError:
-    try:
-        from src.core.chat_connector import ChatConnector, ChatRequest, get_chat_connector
-        from src.core.input_validator import ThreatLevel
-        CONNECTOR_AVAILABLE = True
-    except ImportError as e:
-        CONNECTOR_AVAILABLE = False
-        CONNECTOR_ERROR = str(e)
+# ChatConnector 로드 로직을 render() 내부로 이동하여 Lazy Loading 적용
 
 
 def render():
     """Render the investment insights page"""
 
-    # ChatConnector 사용 가능 여부 확인
-    if CONNECTOR_AVAILABLE:
-        render_chatbot_secure()
-    else:
+    # Lazy Load ChatConnector
+    try:
+        try:
+            from core.chat_connector import (
+                ChatConnector,
+                ChatRequest,
+                get_chat_connector,
+            )
+            from core.input_validator import ThreatLevel
+        except ImportError:
+            from src.core.chat_connector import (
+                ChatConnector,
+                ChatRequest,
+                get_chat_connector,
+            )
+            from src.core.input_validator import ThreatLevel
+
+        # Imports successful
+        render_chatbot_secure(
+            ChatConnector, ChatRequest, get_chat_connector, ThreatLevel
+        )
+
+    except ImportError as e:
         st.error(f"모듈 로드 실패: ChatConnector를 사용할 수 없습니다.")
+        st.info(f"에러 상세: {e}")
         st.info("pip install openai supabase 를 실행하세요")
 
 
-
-def render_chatbot_secure():
+def render_chatbot_secure(ChatConnector, ChatRequest, get_chat_connector, ThreatLevel):
     """Render AI Analyst Chatbot with ChatConnector (secure mode)"""
 
     # CSS 적용
     render_page_css()
-    
+
     # 세션 ID 초기화
     if "session_id" not in st.session_state:
         st.session_state.session_id = str(uuid.uuid4())[:16]
-    
+
     # ChatConnector 초기화
     if "chat_connector" not in st.session_state:
         try:
@@ -71,23 +78,29 @@ def render_chatbot_secure():
         except Exception as e:
             st.error(f"ChatConnector 초기화 실패: {e}")
             return
-    
+
     connector = st.session_state.chat_connector
     session_info = connector.get_session_info(st.session_state.session_id)
-    
+
     # 헤더: 왼쪽 - 투자 인사이트 | 오른쪽 - AI 금융 애널리스트 + 세션 정보
     left_col, right_col = st.columns([1, 1])
-    
+
     with left_col:
-        st.markdown('<h1 class="main-header">� 투자 인사이트</h1>', unsafe_allow_html=True)
-    
+        st.markdown(
+            '<h1 class="main-header">� 투자 인사이트</h1>', unsafe_allow_html=True
+        )
+
     with right_col:
         st.markdown("### 🤖 AI 금융 애널리스트")
         # 세션 정보를 한 줄에 표시
         msg_count = session_info.get("message_count", 0) if session_info else 0
         warnings = session_info.get("warnings", 0) if session_info else 0
-        status = "🟢 정상" if not (session_info and session_info.get("is_blocked")) else "🔴 차단"
-        
+        status = (
+            "🟢 정상"
+            if not (session_info and session_info.get("is_blocked"))
+            else "🔴 차단"
+        )
+
         info_col1, info_col2, info_col3 = st.columns(3)
         with info_col1:
             st.metric("💬 대화", msg_count)
@@ -95,8 +108,6 @@ def render_chatbot_secure():
             st.metric("⚠️ 경고", warnings)
         with info_col3:
             st.metric("상태", status)
-
-
 
     # Initialize session state for chat
     if "chat_history" not in st.session_state:
@@ -116,7 +127,9 @@ def render_chatbot_secure():
                         if error_code == "INPUT_REJECTED":
                             st.warning("⚠️ 입력이 보안 정책에 의해 필터링되었습니다.")
                         elif error_code == "RATE_LIMITED":
-                            st.warning("⏱️ 요청 제한에 도달했습니다. 잠시 후 다시 시도하세요.")
+                            st.warning(
+                                "⏱️ 요청 제한에 도달했습니다. 잠시 후 다시 시도하세요."
+                            )
 
                     # Chart data
                     if msg.get("chart_data"):
@@ -172,33 +185,37 @@ def render_chatbot_secure():
         cols = st.columns(2)
         for i, question in enumerate(suggested_questions):
             with cols[i % 2]:
-                if st.button(f"💬 {question}", key=f"suggest_{msg_count}_{i}", use_container_width=True):
+                if st.button(
+                    f"💬 {question}",
+                    key=f"suggest_{msg_count}_{i}",
+                    use_container_width=True,
+                ):
                     st.session_state.pending_question = question
                     st.rerun()
 
     # Chat input - st.form 사용 (Enter 중복 방지)
     with st.form(key="chat_form", clear_on_submit=True):
         input_col, send_col = st.columns([6, 1])
-        
+
         with input_col:
             user_input = st.text_input(
                 "질문 입력",
                 placeholder="'애플 등록해줘' 또는 '엔비디아와 비교해줘'를 입력해보세요.",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
-        
+
         with send_col:
             submitted = st.form_submit_button("📤", use_container_width=True)
 
     # Control buttons - 채팅 입력창 바로 아래
     col1, col2 = st.columns(2)
-    
+
     with col1:
         if st.button("🗑️ 대화 초기화", use_container_width=True):
             st.session_state.chat_history = []
             connector.clear_session(st.session_state.session_id)
             st.rerun()
-    
+
     with col2:
         if st.button("🔄 세션 새로고침", use_container_width=True):
             st.session_state.session_id = str(uuid.uuid4())[:16]
@@ -207,7 +224,7 @@ def render_chatbot_secure():
 
     # pending_question (추천 질문에서 온 입력) 처리
     pending = st.session_state.pop("pending_question", None)
-    
+
     # prompt 결정
     prompt = None
     if pending:
@@ -223,9 +240,7 @@ def render_chatbot_secure():
         try:
             with st.spinner("분석 중... (시간이 걸릴 수 있습니다)"):
                 request = ChatRequest(
-                    session_id=st.session_state.session_id,
-                    message=prompt,
-                    use_rag=True
+                    session_id=st.session_state.session_id, message=prompt, use_rag=True
                 )
                 response = connector.process_message(request)
 

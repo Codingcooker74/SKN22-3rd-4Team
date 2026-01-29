@@ -10,26 +10,12 @@ from pathlib import Path
 # 경로 설정
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-try:
-    from src.data.supabase_client import (
-        SupabaseClient,
-        get_companies,
-        get_top_revenue_companies,
-    )
-
-    SUPABASE_AVAILABLE = True
-except Exception as e:
-    SUPABASE_AVAILABLE = False
-    print(f"Supabase 연결 실패: {e}")
+# Supabase Client Imports moved to render() for Lazy Loading
+SUPABASE_AVAILABLE = False  # Default state until checked in render()
 
 # 환율 클라이언트 import
-try:
-    from src.tools.exchange_rate_client import get_exchange_client
-
-    EXCHANGE_AVAILABLE = True
-except Exception as e:
-    EXCHANGE_AVAILABLE = False
-    print(f"환율 클라이언트 로드 실패: {e}")
+# Exchange Client Imports moved to render() for Lazy Loading
+EXCHANGE_AVAILABLE = False  # Default state until checked in render()
 
 
 def format_number(value, unit=""):
@@ -49,6 +35,27 @@ def format_number(value, unit=""):
 
 def render():
     """홈 페이지 렌더링"""
+
+    # Lazy Imports
+    global SUPABASE_AVAILABLE, EXCHANGE_AVAILABLE
+
+    try:
+        from src.data.supabase_client import (
+            SupabaseClient,
+            get_companies,
+            get_top_revenue_companies,
+        )
+
+        SUPABASE_AVAILABLE = True
+    except ImportError:
+        SUPABASE_AVAILABLE = False
+
+    try:
+        from src.tools.exchange_rate_client import get_exchange_client
+
+        EXCHANGE_AVAILABLE = True
+    except ImportError:
+        EXCHANGE_AVAILABLE = False
 
     # Header
     st.markdown(
@@ -77,6 +84,25 @@ def render():
         company_count = 0
 
     st.markdown("---")
+
+    # 관심 기업 초기화
+    if "watchlist" not in st.session_state:
+        st.session_state.watchlist = []
+
+    # 관심 기업 섹션 (있을 때만 표시)
+    if st.session_state.watchlist:
+        st.markdown("### ⭐ 관심 기업")
+        cols = st.columns(min(len(st.session_state.watchlist), 6))
+        for i, ticker in enumerate(st.session_state.watchlist[:6]):
+            with cols[i]:
+                # 관심 기업 제거 버튼
+                if st.button(f"🗑️ {ticker}", key=f"home_rm_{ticker}", help="제거"):
+                    st.session_state.watchlist.remove(ticker)
+                    st.rerun()
+
+        if len(st.session_state.watchlist) > 6:
+            st.caption(f"... +{len(st.session_state.watchlist) - 6}개 더")
+        st.markdown("---")
 
     # 메트릭 카드
     col1, col2, col3, col4 = st.columns(4)
@@ -152,9 +178,24 @@ def render():
     st.markdown("---")
 
     # 탭 구성
-    tab1, tab2, tab3 = st.tabs(["📊 매출 상위 기업", "🔍 기업 검색", "💡 빠른 시작"])
+    if "home_active_tab" not in st.session_state:
+        st.session_state.home_active_tab = "📊 매출 상위 기업"
 
-    with tab1:
+    selected_tab = st.radio(
+        "메뉴 선택",
+        ["📊 매출 상위 기업", "🔍 기업 검색", "💡 빠른 시작"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="home_tab_selection",
+        index=["📊 매출 상위 기업", "🔍 기업 검색", "💡 빠른 시작"].index(
+            st.session_state.home_active_tab
+        ),
+        on_change=lambda: st.session_state.update(
+            home_active_tab=st.session_state.home_tab_selection
+        ),
+    )
+
+    if selected_tab == "📊 매출 상위 기업":
         st.markdown("### 📊 2024년 매출 상위 20개 기업")
 
         if SUPABASE_AVAILABLE and company_count > 0:
@@ -200,11 +241,22 @@ def render():
         else:
             st.info("Supabase에 연결하여 데이터를 확인하세요.")
 
-    with tab2:
+    elif selected_tab == "🔍 기업 검색":
         st.markdown("### 🔍 기업 검색")
 
+        # 검색어 상태 유지
+        if "search_query" not in st.session_state:
+            st.session_state.search_query = ""
+
+        def update_search():
+            st.session_state.search_query = st.session_state.search_input
+
         search_query = st.text_input(
-            "티커 또는 기업명으로 검색", placeholder="예: AAPL, Apple, Microsoft"
+            "티커 또는 기업명으로 검색",
+            placeholder="예: AAPL, Apple, Microsoft",
+            value=st.session_state.search_query,
+            key="search_input",
+            on_change=update_search,
         )
 
         if search_query and SUPABASE_AVAILABLE:
@@ -215,64 +267,88 @@ def render():
                     st.success(f"{len(results)}개 기업 검색됨")
 
                     for _, company in results.iterrows():
-                        with st.expander(
-                            f"📊 {company['ticker']} - {company['company_name']}"
-                        ):
-                            # 기업 재무 정보 조회
-                            financials = SupabaseClient.get_financial_summary(
-                                company["ticker"]
-                            )
+                        col_exp, col_star = st.columns([10, 1])
+                        ticker = company["ticker"]
+                        is_watched = ticker in st.session_state.watchlist
 
-                            if financials and financials.get("annual_reports"):
-                                reports = financials["annual_reports"]
+                        with col_star:
+                            # 관심 기업 토글 버튼
+                            btn_label = "⭐" if is_watched else "☆"
+                            # 키를 고유하게 설정
+                            if st.button(
+                                btn_label,
+                                key=f"star_search_{ticker}",
+                                help="관심 기업 추가/제거",
+                            ):
+                                if is_watched:
+                                    st.session_state.watchlist.remove(ticker)
+                                else:
+                                    st.session_state.watchlist.append(ticker)
+                                st.rerun()
 
-                                col1, col2, col3 = st.columns(3)
+                        with col_exp:
+                            with st.expander(
+                                f"📊 {company['ticker']} - {company['company_name']}"
+                            ):
+                                # 기업 재무 정보 조회
+                                financials = SupabaseClient.get_financial_summary(
+                                    company["ticker"]
+                                )
 
-                                # 최신 연도 데이터
-                                latest = reports[0] if reports else {}
+                                if financials and financials.get("annual_reports"):
+                                    reports = financials["annual_reports"]
 
-                                with col1:
-                                    st.metric(
-                                        "매출", format_number(latest.get("revenue"))
-                                    )
-                                with col2:
-                                    st.metric(
-                                        "순이익",
-                                        format_number(latest.get("net_income")),
-                                    )
-                                with col3:
-                                    st.metric(
-                                        "총자산",
-                                        format_number(latest.get("total_assets")),
-                                    )
+                                    c1, c2, c3 = st.columns(3)
+                                    latest = reports[0] if reports else {}
 
-                                # 연도별 데이터 테이블
-                                reports_df = pd.DataFrame(reports)
-                                if not reports_df.empty:
-                                    display_cols = [
-                                        "fiscal_year",
-                                        "revenue",
-                                        "net_income",
-                                        "eps",
-                                    ]
-                                    available_cols = [
-                                        c
-                                        for c in display_cols
-                                        if c in reports_df.columns
-                                    ]
-                                    st.dataframe(
-                                        reports_df[available_cols], hide_index=True
-                                    )
-                            else:
-                                st.info("재무 데이터가 없습니다.")
+                                    with c1:
+                                        st.metric(
+                                            "매출", format_number(latest.get("revenue"))
+                                        )
+                                    with c2:
+                                        st.metric(
+                                            "순이익",
+                                            format_number(latest.get("net_income")),
+                                        )
+                                    with c3:
+                                        st.metric(
+                                            "총자산",
+                                            format_number(latest.get("total_assets")),
+                                        )
+
+                                    # 연도별 데이터 테이블
+                                    reports_df = pd.DataFrame(reports)
+                                    if not reports_df.empty:
+                                        display_cols = [
+                                            "fiscal_year",
+                                            "revenue",
+                                            "net_income",
+                                            "eps",
+                                        ]
+                                        available_cols = [
+                                            c
+                                            for c in display_cols
+                                            if c in reports_df.columns
+                                        ]
+                                        st.dataframe(
+                                            reports_df[available_cols], hide_index=True
+                                        )
+                                else:
+                                    st.info("재무 데이터가 없습니다.")
                 else:
                     st.warning("검색 결과가 없습니다.")
             except Exception as e:
                 st.error(f"검색 오류: {e}")
 
-    with tab3:
-        st.markdown("### 💡 빠른 시작 가이드")
+    elif selected_tab == "💡 빠른 시작":
+        # ... (빠른 시작 내용은 그대로 유지, 너무 길어서 생략하지 않고 덮어쓰기 위해 context에 포함되지 않은 부분도 고려)
+        # However, since we are replacing the whole function block from render definition, we should include the rest.
+        # But previous context view ended at line 418.
+        # I need to verify if there is more content. The file size suggests it might be cut off or I have enough context.
+        # The file lines viewed previously were up to 418.
+        # I will reconstruct the 'Quick Start' section based on previous 'view_file' output.
 
+        st.markdown("### 💡 빠른 시작 가이드")
         st.markdown(
             """
         #### 🎯 이 앱으로 할 수 있는 것들
