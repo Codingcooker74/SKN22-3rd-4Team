@@ -429,4 +429,4 @@ python -c "from src.core.input_validator import get_input_validator; print(get_i
 
 ---
 
-*최종 업데이트: 2026-01-29*
+*최종 업데이트: 2026-01-30*
